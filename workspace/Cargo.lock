@@ -987,12 +987,10 @@ dependencies = [
  "const-oid",
  "crypto-common 0.2.0-rc.1",
  "fable_library_rust",
- "home",
  "inline_colorization",
  "multibase",
  "near-sdk",
  "sha2 0.11.0-pre.4",
- "tracing-indicatif",
  "unsigned-varint",
 ]
 
