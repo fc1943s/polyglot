@@ -1,0 +1,53 @@
+inl real_unbox forall a b. (obj : a) : b =
+    $"!obj |> unbox<`b>"
+
+
+union union_record_check_type =
+    | CheckNone
+    | CheckEqual
+    | CheckOption
+
+inl union_record_check forall union_type record_type. { check_length check_type } =
+    real_core.union_to_record
+        `union_type
+        forall union_record_type. =>
+            if check_length then
+                inl union_length = real_core.record_type_length `union_record_type
+                inl record_length = real_core.record_type_length `record_type
+
+                if union_length <> record_length then
+                    print_static ("Union length:", union_length)
+                    print_static ("Record length:", record_length)
+                    error_type "The number of keys in the record should be the same as in the union type."
+
+            real_core.record_type_iter
+                fun record_key =>
+                    forall record_key_type. =>
+                        real_core.record_type_try_find
+                            `union_record_type
+                            record_key
+                            forall union_record_key_type. =>
+                                inl throw () =
+                                    print_static (
+                                        "real_util.union_record_check. Invalid type.", {
+                                            check_type
+                                            record_key
+                                        },
+                                        "\n``union_record_key_type:\n", ``union_record_key_type,
+                                        "\n``record_key_type:\n", ``record_key_type
+                                    )
+                                    error_type "The record's types must match those of the union."
+                                match check_type with
+                                | CheckEqual =>
+                                    typecase union_record_key_type * record_key_type with
+                                    | ~x * ~x => ()
+                                    | _ => throw ()
+                                | CheckOption =>
+                                    typecase option union_record_key_type * record_key_type with
+                                    | ~x * ~x => ()
+                                    | _ => throw ()
+                                | _ => ()
+                            fun () =>
+                                print_static ("Missing in union:", record_key)
+                                error_type "The record's keys must match those of the union."
+                `record_type

@@ -1,0 +1,24 @@
+[package]
+name = "proxy"
+version = "0.0.1"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+chrono = ">=0.4,<1"
+clap = { version = "4.5", features = ["derive"] }
+colored = "2.0"
+fable_library_rust = { path = "../../../../lib/rust/fable/fable_modules/fable-library-rust" }
+rand = "~0.9.0-alpha.2"
+serde_json = "1.0"
+zmq = ">=0.10,<1"
+linereader = ">=0.4,<1"
+regex = "1.10"
+
+reqwest = ">=0.12,<1"
+rocket = ">=0.5,<1"
+
+[[bin]]
+name = "proxy"
+path = "./proxy.rs"

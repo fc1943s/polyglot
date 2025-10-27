@@ -1,0 +1,365 @@
+#!meta
+
+{"kernelInfo":{"defaultKernelName":"spiral","items":[{"name":"spiral"}]}}
+
+#!markdown
+
+## Tasks (Polyglot)
+
+#!spiral
+
+//// test
+
+open testing
+
+#!spiral
+
+open sm'_operators
+
+#!markdown
+
+## task_id
+
+#!spiral
+
+nominal task_id = string
+
+#!markdown
+
+## task_name
+
+#!spiral
+
+nominal task_name = string
+
+#!markdown
+
+## manual_scheduling
+
+#!spiral
+
+union manual_scheduling =
+    | WithSuggestion
+    | WithoutSuggestion
+
+#!markdown
+
+## day_offset
+
+#!spiral
+
+nominal day_offset = int
+
+#!markdown
+
+## week_offset
+
+#!spiral
+
+nominal week_offset = int
+
+#!markdown
+
+## month_offset
+
+#!spiral
+
+nominal month_offset = int
+
+#!markdown
+
+## recurrency_offset
+
+#!spiral
+
+union recurrency_offset =
+    | Days : day_offset
+    | Weeks : week_offset
+    | Months : month_offset
+
+#!markdown
+
+## fixed_recurrency
+
+#!spiral
+
+union fixed_recurrency =
+    | Weekly : date_time.day_of_week
+    | Monthly : date_time.day
+    | Yearly : date_time.day * date_time.month
+
+#!markdown
+
+## recurrency
+
+#!spiral
+
+union recurrency =
+    | Offset : recurrency_offset
+    | Fixed : list fixed_recurrency
+
+#!markdown
+
+## scheduling
+
+#!spiral
+
+union scheduling =
+    | Manual : manual_scheduling
+    | Recurrent : recurrency
+
+#!markdown
+
+## task
+
+#!spiral
+
+type task =
+    {
+        id : task_id
+        name : task_name
+        scheduling : scheduling
+    }
+
+#!markdown
+
+## date
+
+#!spiral
+
+type date =
+    {
+        year : date_time.year
+        month : date_time.month
+        day : date_time.day
+    }
+
+#!markdown
+
+## status
+
+#!spiral
+
+union status =
+    | Postponed : option ()
+
+#!markdown
+
+### action
+
+#!spiral
+
+union action =
+    | SetDate : date
+    | AddTask : task
+    | SetScheduling : task * scheduling
+    | AddStatus : task * date * status
+
+#!markdown
+
+## get_actions (test)
+
+#!spiral
+
+//// test
+
+inl get_actions () : list action =
+    open date_time
+    [
+        SetDate {
+            year = year 2000
+            month = February
+            day = day 29
+        }
+        AddTask {
+            id = task_id "1"
+            name = task_name "1"
+            scheduling = Manual WithSuggestion
+        }
+        AddTask {
+            id = task_id "02"
+            name = task_name "02"
+            scheduling = Manual WithSuggestion
+        }
+        AddTask {
+            id = task_id "00003"
+            name = task_name "00003"
+            scheduling = Manual WithSuggestion
+        }
+    ]
+
+#!spiral
+
+//// test
+///! gleam
+///! fsharp
+///! cuda
+///! rust
+///! typescript
+///! python
+
+get_actions ()
+|> sm'.format_debug
+|> _assert sm'.contains "00003"
+
+#!spiral
+
+//// test
+///! gleam
+///! fsharp
+///! cuda
+///! rust
+///! typescript
+///! python
+
+get_actions ()
+|> listm'.try_item 3i32
+|> function
+    | Some (AddTask { name }) => name
+|> _assert_eq (task_name "00003")
+
+#!spiral
+
+//// test
+
+inl print padding cols =
+    ({ lines = []; last_lines = []; max_acc = 0i32 }, cols)
+    ||> listm.fold fun { last_lines max_acc } lines =>
+        inl { count max } =
+            (lines, { count = 0i32; max = 0i32 })
+            ||> listm.foldBack fun line { count max } => {
+                count = count + 1
+                max =
+                    inl len = line |> sm'.length
+                    if len > max
+                    then len
+                    else max
+            }
+        inl { lines } =
+            (lines, { lines = []; i = 0i32 })
+            ||> listm.foldBack fun line { lines i } => {
+                lines =
+                    inl last_line =
+                        last_lines
+                        |> listm'.try_item (count - i - 1)
+                        |> optionm'.default_with fun () =>
+                            " " |> sm'.replicate max_acc
+                    inl line =
+                        if padding = 0
+                        then line
+                        else
+                            inl padding = " " |> sm'.replicate padding
+                            line ++# padding
+                    inl line = line |> sm'.pad_right (max + padding) ' '
+                    last_line ++# line :: lines
+                i = i + 1
+            }
+        {
+            lines
+            last_lines = lines
+            max_acc = max_acc + max + padding
+        }
+    |> fun x => x.lines
+    |> listm'.box
+    |> seq.of_list'
+    |> sm'.concat "\n"
+
+inl col () =
+    [ "Task" ]
+    ++ (
+        get_actions ()
+        |> listm.map function
+            | AddTask { name } =>
+                inl (task_name name) = name
+                name
+            | _ => ""
+    )
+
+inl cols () =
+    [
+        col ()
+        col ()
+        [ "a"; "b"; "c"; "d"; "e" ]
+    ]
+
+#!spiral
+
+//// test
+///! gleam
+///! fsharp
+///! cuda
+///! rust
+///! typescript
+///! python
+///// print_code
+
+cols ()
+|> print 1i32
+|> console.write_line
+
+#!spiral
+
+//// test
+
+inl task_name_width =
+    (0, get_actions ())
+    ||> listm.fold fun acc => function
+        | AddTask { name } =>
+            inl (task_name name) = name
+            inl l = name |> sm'.length
+            if l > acc
+            then l
+            else acc
+        | _ => acc
+    |> (+) 1
+
+
+inl lines =
+    ("" |> sm'.pad_right task_name_width ' ')
+    ++# "|" ++# " 2000               "
+    ++# "|\n"
+
+    ++# ("" |> sm'.pad_right task_name_width ' ')
+    ++# "|" ++# " february  "
+    ++# "|" ++# " march  "
+    ++# "|\n"
+
+    ++# ("" |> sm'.pad_right task_name_width ' ')
+    ++# "|" ++# "sa"
+    ++# "|" ++# "su"
+    ++# "|" ++# "mo"
+    ++# "|" ++# "tu"
+    ++# "|" ++# "we"
+    ++# "|" ++# "th"
+    ++# "|" ++# "fr"
+    ++# "|\n"
+
+    ++# ("" |> sm'.pad_right task_name_width ' ')
+    ++# "|" ++# "26"
+    ++# "|" ++# "27"
+    ++# "|" ++# "28"
+    ++# "|" ++# "29"
+    ++# "|" ++# "01"
+    ++# "|" ++# "02"
+    ++# "|" ++# "03"
+    ++# "|"
+
+inl lines =
+    (lines, get_actions ())
+    ||> listm.fold fun acc => function
+        | AddTask { name } =>
+            inl (task_name name) = name
+            if acc = ""
+            then acc
+            else acc ++# "\n"
+            ++# (name |> sm'.pad_right task_name_width ' ')
+            ++# "|" ++# console.color_bright_white () ++# "??" ++# console.color_reset ()
+            ++# "|" ++# console.color_bright_white () ++# "??" ++# console.color_reset ()
+            ++# "|" ++# console.color_bright_green () ++# "??" ++# console.color_reset ()
+            ++# "|" ++# console.color_yellow () ++# "??" ++# console.color_reset ()
+            ++# "|" ++# console.color_bright_red () ++# "??" ++# console.color_reset ()
+            ++# "|" ++# console.color_bright_magenta () ++# "??" ++# console.color_reset ()
+            ++# "|" ++# console.color_bright_cyan () ++# "??" ++# console.color_reset ()
+            ++# "|"
+        | _ => acc
+lines

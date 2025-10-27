@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <LangVersion>preview</LangVersion>
+        <RollForward>Major</RollForward>
+        <TargetLatestRuntimePatch>true</TargetLatestRuntimePatch>
+        <PackageId>polyglot</PackageId>
+        <Version>0.0.1-alpha.1</Version>
+    </PropertyGroup>
+    <ItemGroup>
+        <Compile Include="$(MSBuildThisFileDirectory)rust/Types.fs" />
+        <Compile Include="$(MSBuildThisFileDirectory)proxy/proxy.fsx" />
+        <Compile Include="$(MSBuildThisFileDirectory)cli/cli.fsx" />
+    </ItemGroup>
+    <Import Project="..\..\..\.paket\Paket.Restore.targets" />
+</Project>

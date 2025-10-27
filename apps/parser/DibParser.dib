@@ -1,0 +1,906 @@
+#!meta
+
+{"kernelInfo":{"defaultKernelName":"spiral","items":[{"name":"spiral"}]}}
+
+#!markdown
+
+# DibParser (Polyglot)
+
+#!fsharp
+
+#r @"../../../../../../../.nuget/packages/fsharp.control.asyncseq/3.2.1/lib/netstandard2.1/FSharp.Control.AsyncSeq.dll"
+#r @"../../../../../../../.nuget/packages/system.reactive/6.0.1-preview.1/lib/net6.0/System.Reactive.dll"
+#r @"../../../../../../../.nuget/packages/system.reactive.linq/6.0.1-preview.1/lib/netstandard2.0/System.Reactive.Linq.dll"
+#r @"../../../../../../../.nuget/packages/argu/6.2.4/lib/netstandard2.0/Argu.dll"
+#r @"../../../../../../../.nuget/packages/fparsec/2.0.0-beta2/lib/netstandard2.1/FParsec.dll"
+#r @"../../../../../../../.nuget/packages/fparsec/2.0.0-beta2/lib/netstandard2.1/FParsecCS.dll"
+
+#!fsharp
+
+#!import ../../lib/fsharp/Notebooks.dib
+#!import ../../lib/fsharp/Testing.dib
+
+#!pwsh
+
+ls ~/.nuget/packages/argu
+
+#!fsharp
+
+#!import ../../lib/fsharp/Common.fs
+#!import ../../lib/fsharp/CommonFSharp.fs
+#!import ../../lib/fsharp/Async.fs
+#!import ../../lib/fsharp/AsyncSeq.fs
+#!import ../../lib/fsharp/Runtime.fs
+#!import ../../lib/fsharp/FileSystem.fs
+
+#!fsharp
+
+#if !INTERACTIVE
+open Lib
+#endif
+
+#!fsharp
+
+open Common
+open FParsec
+open SpiralFileSystem.Operators
+
+#!markdown
+
+## escapeCell (test)
+
+#!fsharp
+
+//// test
+
+let inline escapeCell input =
+    input
+    |> SpiralSm.split "\n"
+    |> Array.map (function
+        | line when line |> SpiralSm.starts_with "\\#!" || line |> SpiralSm.starts_with "\\#r" ->
+            System.Text.RegularExpressions.Regex.Replace (line, "^\\\\#", "#")
+        | line -> line
+    )
+    |> SpiralSm.concat "\n"
+
+#!fsharp
+
+//// test
+
+$"a{nl}\\#!magic{nl}b{nl}"
+|> escapeCell
+|> _assertEqual (
+    $"a{nl}#!magic{nl}b{nl}"
+)
+
+#!markdown
+
+## magicMarker
+
+#!fsharp
+
+let magicMarker : Parser<string, unit> = pstring "#!"
+
+#!fsharp
+
+//// test
+
+"#!magic"
+|> run magicMarker
+|> _assertEqual (
+    Success ("#!", (), Position ("", 2, 1, 3))
+)
+
+#!fsharp
+
+//// test
+
+"##!magic"
+|> run magicMarker
+|> _assertEqual (
+    Failure (
+        $"Error in Ln: 1 Col: 1{nl}##!magic{nl}^{nl}Expecting: '#!'{nl}",
+        ParserError (
+            Position ("", 0, 1, 1),
+            null,
+            ErrorMessageList (ExpectedString "#!")
+        ),
+        ()
+    )
+)
+
+#!markdown
+
+## magicCommand
+
+#!fsharp
+
+let magicCommand =
+    magicMarker
+    >>. manyTill anyChar newline
+    |>> (System.String.Concat >> SpiralSm.trim)
+
+#!fsharp
+
+//// test
+
+"#!magic
+
+a"
+|> run magicCommand
+|> _assertEqual (
+    Success ("magic", (), Position ("", 8, 2, 1))
+)
+
+#!fsharp
+
+//// test
+
+" #!magic
+
+a"
+|> run magicCommand
+|> _assertEqual (
+    Failure (
+        $"Error in Ln: 1 Col: 1{nl} #!magic{nl}^{nl}Expecting: '#!'{nl}",
+        ParserError (
+            Position ("", 0, 1, 1),
+            null,
+            ErrorMessageList (ExpectedString "#!")
+        ),
+        ()
+    )
+)
+
+#!markdown
+
+## content
+
+#!fsharp
+
+let content =
+    (newline >>. magicMarker) <|> (eof >>. preturn "")
+    |> attempt
+    |> lookAhead
+    |> manyTill anyChar
+    |>> (System.String.Concat >> SpiralSm.trim)
+
+#!fsharp
+
+//// test
+
+"#!magic
+
+
+a
+
+
+"
+|> run content
+|> _assertEqual (
+    Success ("#!magic
+
+
+a", (), Position ("", 14, 7, 1))
+)
+
+#!markdown
+
+## Output
+
+#!fsharp
+
+type Output =
+    | Fs
+    | Md
+    | Spi
+    | Spir
+
+#!markdown
+
+## Magic
+
+#!fsharp
+
+type Magic =
+    | Fsharp
+    | Markdown
+    | Spiral of Output
+    | Magic of string
+
+#!markdown
+
+## kernelOutputs
+
+#!fsharp
+
+let inline kernelOutputs magic =
+    match magic with
+    | Fsharp -> [ Fs ]
+    | Markdown -> [ Md ]
+    | Spiral output -> [ output ]
+    | _ -> []
+
+#!markdown
+
+## Block
+
+#!fsharp
+
+type Block =
+    {
+        magic : Magic
+        content : string
+    }
+
+#!markdown
+
+## block
+
+#!fsharp
+
+let block =
+    pipe2
+        magicCommand
+        content
+        (fun magic content ->
+            let magic, content =
+                match magic with
+                | "fsharp" -> Fsharp, content
+                | "markdown" -> Markdown, content
+                | "spiral" ->
+                    let output = if content |> SpiralSm.contains "//// real\n" then Spir else Spi
+                    let content =
+                        if output = Spi
+                        then content
+                        else
+                            content
+                            |> SpiralSm.replace "//// real\n\n" ""
+                            |> SpiralSm.replace "//// real\n" ""
+                    Spiral output, content
+                | magic -> magic |> Magic, content
+            {
+                magic = magic
+                content = content
+            })
+
+#!fsharp
+
+//// test
+
+"#!magic
+
+
+a
+
+
+"
+|> run block
+|> _assertEqual (
+    Success (
+        { magic = Magic "magic"; content = "a" },
+        (),
+        Position ("", 14, 7, 1)
+    )
+)
+
+#!markdown
+
+## blocks
+
+#!fsharp
+
+let blocks =
+    skipMany newline
+    >>. sepEndBy block (skipMany1 newline)
+
+#!fsharp
+
+//// test
+
+
+"#!magic1
+
+a
+
+\#!magic2
+
+b
+
+"
+|> escapeCell
+|> run blocks
+|> _assertEqual (
+    Success (
+        [
+            { magic = Magic "magic1"; content = "a" }
+            { magic = Magic "magic2"; content = "b" }
+        ],
+        (),
+        Position ("", 26, 9, 1)
+    )
+)
+
+#!markdown
+
+## formatBlock
+
+#!fsharp
+
+let inline formatBlock output (block : Block) =
+    match output, block with
+    | output, { magic = Markdown; content = content } ->
+        let markdownComment =
+            match output with
+            | Spi | Spir -> "/// "
+            | Fs -> "/// "
+            | _ -> ""
+        content
+        |> SpiralSm.split "\n"
+        |> Array.map (SpiralSm.trim_end [||])
+        |> Array.filter (SpiralSm.ends_with " (test)" >> not)
+        |> Array.map (function
+            | "" -> markdownComment
+            | line -> System.Text.RegularExpressions.Regex.Replace (line, "^\\s*", $"$&{markdownComment}")
+        )
+        |> SpiralSm.concat "\n"
+    | Fs, { magic = Fsharp; content = content } ->
+        let trimmedContent = content |> SpiralSm.trim
+        if trimmedContent |> SpiralSm.contains "//// test\n"
+            || trimmedContent |> SpiralSm.contains "//// ignore\n"
+        then ""
+        else
+            content
+            |> SpiralSm.split "\n"
+            |> Array.filter (SpiralSm.trim_start [||] >> SpiralSm.starts_with "#r" >> not)
+            |> SpiralSm.concat "\n"
+    | (Spi | Spir), { magic = Spiral output'; content = content } when output' = output ->
+        let trimmedContent = content |> SpiralSm.trim
+        if trimmedContent |> SpiralSm.contains "//// test\n"
+            || trimmedContent |> SpiralSm.contains "//// ignore\n"
+        then ""
+        else content
+    | _ -> ""
+
+#!fsharp
+
+//// test
+
+"#!markdown
+
+
+a
+
+    b
+
+c
+
+
+\#!markdown
+
+
+c
+
+
+\#!fsharp
+
+
+let a = 1"
+|> escapeCell
+|> run block
+|> function
+    | Success (block, _, _) -> formatBlock Fs block
+    | Failure (msg, _, _) -> failwith msg
+|> _assertEqual "/// a
+/// 
+    /// b
+/// 
+/// c"
+
+#!markdown
+
+## formatBlocks
+
+#!fsharp
+
+let inline formatBlocks output blocks =
+    blocks
+    |> List.map (fun block ->
+        block, formatBlock output block
+    )
+    |> List.filter (snd >> (<>) "")
+    |> fun list ->
+        (list, (None, []))
+        ||> List.foldBack (fun (block, content) (lastMagic, acc) ->
+            let lineBreak =
+                if block.magic = Markdown && lastMagic <> Some Markdown && lastMagic <> None
+                then ""
+                else "\n"
+            Some block.magic, $"{content}{lineBreak}" :: acc
+        )
+    |> snd
+    |> SpiralSm.concat "\n"
+
+#!fsharp
+
+//// test
+
+"#!markdown
+
+
+a
+
+b
+
+
+\#!markdown
+
+
+c
+
+
+\#!fsharp
+
+
+let a = 1
+
+\#!markdown
+
+d (test)
+
+\#!fsharp
+
+//// test
+
+let a = 2
+
+\#!markdown
+
+e
+
+\#!fsharp
+
+let a = 3"
+|> escapeCell
+|> run blocks
+|> function
+    | Success (blocks, _, _) -> formatBlocks Fs blocks
+    | Failure (msg, _, _) -> failwith msg
+|> _assertEqual "/// a
+/// 
+/// b
+
+/// c
+let a = 1
+
+/// e
+let a = 3
+"
+
+#!markdown
+
+## indentBlock
+
+#!fsharp
+
+let inline indentBlock (block : Block) =
+    { block with
+        content =
+            block.content
+            |> SpiralSm.split "\n"
+            |> Array.fold
+                (fun (lines, isMultiline) line ->
+                    let trimmedLine = line |> SpiralSm.trim
+                    if trimmedLine = ""
+                    then "" :: lines, isMultiline
+                    else
+                        let inline singleQuoteLine () =
+                            trimmedLine |> Seq.sumBy ((=) '"' >> System.Convert.ToInt32) = 1
+                            && trimmedLine |> SpiralSm.contains @"'""'" |> not
+                            && trimmedLine |> SpiralSm.ends_with "{" |> not
+                            && trimmedLine |> SpiralSm.ends_with "{|" |> not
+                            && trimmedLine |> SpiralSm.starts_with "}" |> not
+                            && trimmedLine |> SpiralSm.starts_with "|}" |> not
+
+                        match isMultiline, trimmedLine |> SpiralSm.split_string [| $"{q}{q}{q}" |] with
+                        | false, [| _; _ |] ->
+                            $"    {line}" :: lines, true
+
+                        | true, [| _; _ |] ->
+                            line :: lines, false
+
+                        | false, _ when singleQuoteLine () ->
+                            $"    {line}" :: lines, true
+
+                        | false, _ when line |> SpiralSm.starts_with "#" && block.magic = Fsharp ->
+                            line :: lines, false
+
+                        | false, _ ->
+                            $"    {line}" :: lines, false
+
+                        | true, _ when singleQuoteLine () && line |> SpiralSm.starts_with "    " ->
+                            $"    {line}" :: lines, false
+
+                        | true, _ when singleQuoteLine () ->
+                            line :: lines, false
+
+                        | true, _ ->
+                            line :: lines, true
+                )
+                ([], false)
+            |> fst
+            |> List.rev
+            |> SpiralSm.concat "\n"
+    }
+
+#!markdown
+
+## parse
+
+#!fsharp
+
+let inline parse output input =
+    match run blocks input with
+    | Success (blocks, _, _) ->
+        blocks
+        |> List.filter (fun block ->
+            block.magic |> kernelOutputs |> List.contains output || block.magic = Markdown
+        )
+        |> List.map Some
+        |> fun x -> x @ [ None ]
+        |> List.pairwise
+        |> List.choose (function
+            | Some { magic = Markdown } as block, Some { magic = Markdown } -> block
+            | Some { magic = Markdown } as block, Some { magic = magic }
+                when magic |> kernelOutputs |> List.contains output -> block
+            | Some { magic = Markdown } as block, _ when output = Md -> block
+            | Some { magic = Markdown }, _ -> None
+            | Some block, _ -> Some block
+            | _ -> None
+        )
+        |> List.fold
+            (fun (acc, indent) -> function
+                | { magic = Markdown; content = content }
+                    when output = Fs
+                    && content |> SpiralSm.starts_with "# "
+                    && content |> SpiralSm.ends_with ")"
+                    ->
+                    let moduleName, namespaceName =
+                        System.Text.RegularExpressions.Regex.Match (content, @"# (.*) \((.*)\)$")
+                        |> fun m -> m.Groups.[1].Value, m.Groups.[2].Value
+
+                    let moduleBlock =
+                        {
+                            magic = Fsharp
+                            content =
+                                $"#if !INTERACTIVE
+namespace {namespaceName}
+#endif
+
+module {moduleName} ="
+                        }
+
+                    moduleBlock :: acc, (indent + 1)
+                | { magic = magic ; content = content } as block
+                    when indent > 0
+                    ->
+                    indentBlock block :: acc, indent
+                | block -> block :: acc, indent
+            )
+            ([], 0)
+        |> fst
+        |> List.rev
+        |> Result.Ok
+    | Failure (errorMsg, _, _) -> Result.Error errorMsg
+
+#!fsharp
+
+//// test
+
+let example1 =
+    $"""#!meta
+
+{{"kernelInfo":{{"defaultKernelName":"fsharp","items":[{{"aliases":[],"name":"fsharp"}},{{"aliases":[],"name":"fsharp"}}]}}}}
+
+\#!markdown
+
+# TestModule (TestNamespace)
+
+\#!fsharp
+
+\#!import file.dib
+
+\#!fsharp
+
+\#r "nuget:Expecto"
+
+\#!markdown
+
+## ParserLibrary
+
+\#!fsharp
+
+open System
+
+\#!markdown
+
+## x (test)
+
+\#!fsharp
+
+//// ignore
+
+let x = 1
+
+\#!spiral
+
+//// test
+
+inl x = 1i32
+
+\#!spiral
+
+//// real
+
+inl x = 2i32
+
+\#!spiral
+
+inl x = 3i32
+
+\#!markdown
+
+### TextInput
+
+\#!fsharp
+
+let str1 = "abc
+def"
+
+let str2 =
+    "abc\
+def"
+
+let str3 =
+    $"1{{
+        1
+    }}1"
+
+let str4 =
+    $"1{{({{|
+        a = 1
+    |}}).a}}1"
+
+let str5 =
+    "abc \
+        def"
+
+let x =
+    match '"' with
+    | '"' -> true
+    | _ -> false
+
+let long1 = {q}{q}{q}a{q}{q}{q}
+
+let long2 =
+    {q}{q}{q}
+a
+{q}{q}{q}
+
+\#!fsharp
+
+type Position =
+    {{
+#if INTERACTIVE
+        line : string
+#else
+        line : int
+#endif
+        column : int
+    }}"""
+    |> escapeCell
+
+#!fsharp
+
+//// test
+
+example1
+|> parse Fs
+|> Result.toOption
+|> Option.get
+|> (formatBlocks Fs)
+|> _assertEqual $"""#if !INTERACTIVE
+namespace TestNamespace
+#endif
+
+module TestModule =
+
+    /// ## ParserLibrary
+    open System
+
+    /// ### TextInput
+    let str1 = "abc
+def"
+
+    let str2 =
+        "abc\
+def"
+
+    let str3 =
+        $"1{{
+            1
+        }}1"
+
+    let str4 =
+        $"1{{({{|
+            a = 1
+        |}}).a}}1"
+
+    let str5 =
+        "abc \
+            def"
+
+    let x =
+        match '"' with
+        | '"' -> true
+        | _ -> false
+
+    let long1 = {q}{q}{q}a{q}{q}{q}
+
+    let long2 =
+        {q}{q}{q}
+a
+{q}{q}{q}
+
+    type Position =
+        {{
+#if INTERACTIVE
+            line : string
+#else
+            line : int
+#endif
+            column : int
+        }}
+"""
+
+#!fsharp
+
+//// test
+
+example1
+|> parse Md
+|> Result.toOption
+|> Option.get
+|> (formatBlocks Md)
+|> _assertEqual "# TestModule (TestNamespace)
+
+## ParserLibrary
+
+### TextInput
+"
+
+#!fsharp
+
+//// test
+
+example1
+|> parse Spi
+|> Result.toOption
+|> Option.get
+|> (formatBlocks Spi)
+|> _assertEqual "/// # TestModule (TestNamespace)
+
+/// ## ParserLibrary
+inl x = 3i32
+"
+
+#!fsharp
+
+//// test
+
+example1
+|> parse Spir
+|> Result.toOption
+|> Option.get
+|> (formatBlocks Spir)
+|> _assertEqual "/// # TestModule (TestNamespace)
+
+/// ## ParserLibrary
+inl x = 2i32
+"
+
+#!markdown
+
+## parseDibCode
+
+#!fsharp
+
+let inline parseDibCode output file = async {
+    trace Debug
+        (fun () -> "parseDibCode")
+        (fun () -> $"output: {output} / file: {file} / {_locals ()}")
+    let! input = file |> SpiralFileSystem.read_all_text_async
+    match parse output input with
+    | Result.Ok blocks -> return blocks |> formatBlocks output
+    | Result.Error msg -> return failwith msg
+}
+
+#!markdown
+
+## writeDibCode
+
+#!fsharp
+
+let inline writeDibCode output path = async {
+    trace Debug
+        (fun () -> "writeDibCode")
+        (fun () -> $"output: {output} / path: {path} / {_locals ()}")
+    let! result = parseDibCode output path
+    let pathDir = path |> System.IO.Path.GetDirectoryName
+    let fileNameWithoutExt =
+        match output, path |> System.IO.Path.GetFileNameWithoutExtension with
+        | Spir, fileNameWithoutExt -> $"{fileNameWithoutExt}_real"
+        | _, fileNameWithoutExt -> fileNameWithoutExt
+    let outputPath = pathDir </> $"{fileNameWithoutExt}.{output |> string |> SpiralSm.to_lower}"
+    do! result |> SpiralFileSystem.write_all_text_async outputPath
+}
+
+#!markdown
+
+## Arguments
+
+#!fsharp
+
+[<RequireQualifiedAccess>]
+type Arguments =
+    | [<Argu.ArguAttributes.MainCommand; Argu.ArguAttributes.Mandatory>]
+        File of file : string * Output
+
+    interface Argu.IArgParserTemplate with
+        member s.Usage =
+            match s with
+            | File _ -> nameof File
+
+#!fsharp
+
+//// test
+
+Argu.ArgumentParser.Create<Arguments>().PrintUsage ()
+
+#!markdown
+
+## main
+
+#!fsharp
+
+let main args =
+    let argsMap = args |> Runtime.parseArgsMap<Arguments>
+
+    let files =
+        argsMap.[nameof Arguments.File]
+        |> List.map (function
+            | Arguments.File (path, output) -> path, output
+        )
+
+    files
+    |> List.map (fun (path, output) -> path |> writeDibCode output)
+    |> Async.Parallel
+    |> Async.Ignore
+    |> Async.runWithTimeout 30000
+    |> function
+        | Some () -> 0
+        | None -> 1
+
+#!fsharp
+
+//// test
+
+let args =
+    System.Environment.GetEnvironmentVariable "ARGS"
+    |> SpiralRuntime.split_args
+    |> Result.toArray
+    |> Array.collect id
+
+match args with
+| [||] -> 0
+| args -> if main args = 0 then 0 else failwith "main failed"

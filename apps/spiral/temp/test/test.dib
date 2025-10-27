@@ -1,0 +1,347 @@
+#!meta
+
+{"kernelInfo":{"defaultKernelName":"spiral","items":[{"aliases":[],"name":"spiral"}]}}
+
+#!markdown
+
+# test (Polyglot)
+
+#!spiral
+
+//// test
+
+open testing
+
+#!spiral
+
+//// test
+//// print_code
+
+inl jp = [ "J"; "P" ]
+inl tf = [ "T"; "F" ]
+inl sn = [ "S"; "N" ]
+inl ie = [ "I"; "E" ]
+
+(ie, ([] : _ string))
+||> listm.foldBack fun ie' acc =>
+    inl ssnn acc' jp' =
+        (sn, acc')
+        ||> listm.foldBack fun sn' acc' =>
+            inl c' ie' sn' tf' jp' =
+                $'$"{!ie'}{!sn'}{!tf'}{!jp'}"'
+
+            if listm.length acc' % 4i32 = 2 then
+                (tf, acc')
+                ||> listm.foldBack fun tf' acc'' =>
+                    c' ie' sn' tf' jp' :: acc''
+            else
+                (acc', tf)
+                ||> listm.fold fun acc'' tf' =>
+                    c' ie' sn' tf' jp' :: acc''
+    if acc = [] then
+        (acc, jp)
+        ||> listm.fold fun acc' jp' =>
+            ssnn acc' jp'
+    else
+        (jp, acc)
+        ||> listm.foldBack fun jp' acc' =>
+            ssnn acc' jp'
+|> listm'.box
+|> listm'.to_array'
+|> _assert_eq' ;[
+    "ISTJ"; "ISFJ"; "INFJ"; "INTJ"
+    "ISTP"; "ISFP"; "INFP"; "INTP"
+    "ESTP"; "ESFP"; "ENFP"; "ENTP"
+    "ESTJ"; "ESFJ"; "ENFJ"; "ENTJ"
+]
+
+#!spiral
+
+//// test
+//// print_code
+
+inl i_e =
+    listm'.replicate 8i32 "I" ++ listm'.replicate 8i32 "E"
+inl s_n =
+    [ "S"; "S"; "N"; "N" ]
+    |> listm'.replicate 4i32
+    |> listm'.collect id
+inl t_f =
+    [ "T"; "F"; "F"; "T" ]
+    |> listm'.replicate 4i32
+    |> listm'.collect id
+inl j_p =
+    [ "J"; "J"; "J"; "J" ]
+    ++ [ "P"; "P"; "P"; "P" ]
+    ++ [ "P"; "P"; "P"; "P" ]
+    ++ [ "J"; "J"; "J"; "J" ]
+inl mbti =
+    listm'.map4 (fun a b c d => $'$"{!a}{!b}{!c}{!d}"') i_e s_n t_f j_p
+
+mbti
+|> listm'.box
+|> listm'.to_array'
+|> _assert_eq' ;[
+    "ISTJ"; "ISFJ"; "INFJ"; "INTJ"
+    "ISTP"; "ISFP"; "INFP"; "INTP"
+    "ESTP"; "ESFP"; "ENFP"; "ENTP"
+    "ESTJ"; "ESFJ"; "ENFJ"; "ENTJ"
+]
+
+#!spiral
+
+//// test
+//// print_code
+
+fun i =>
+    inl i_e =
+        if i < 8
+        then "I"
+        else "E"
+    inl s_n = 
+        inl group = (i / 2) % 2
+        if group = 0
+        then "S"
+        else "N"
+    inl t_f =
+        match i % 4 with
+        | 0 => "T"
+        | 1 => "F"
+        | 2 => "F"
+        | _ => "T"
+    inl j_p =
+        if i < 4
+        then "J"
+        elif i < 12
+        then "P"
+        else "J"
+    $'$"{!i_e}{!s_n}{!t_f}{!j_p}"'
+|> listm.init 16i32
+|> listm'.box
+|> listm'.to_array'
+|> _assert_eq' ;[
+    "ISTJ"; "ISFJ"; "INFJ"; "INTJ"
+    "ISTP"; "ISFP"; "INFP"; "INTP"
+    "ESTP"; "ESFP"; "ENFP"; "ENTP"
+    "ESTJ"; "ESFJ"; "ENFJ"; "ENTJ"
+]
+
+#!fsharp
+
+type PhonologicalFeature =
+    | VowelFeature of
+        height: Height
+        * backness: Backness
+        * roundedness: Roundedness
+        * tone: Option<Tone>
+        * stress: Option<Stress>
+        * length: Option<Length>
+    | ConsonantFeature of
+        place: PlaceOfArticulation
+        * manner: MannerOfArticulation
+        * voicing: Voicing
+        * length: Option<Length>
+    | VowelHarmonyFeature
+    | PitchAccentFeature
+
+and Stress = Primary | Secondary
+and Length = Long | Short | HalfLong
+
+and Height =
+    | High | NearHigh | HighMid
+    | Mid | LowMid | NearLow
+    | Low
+
+and Backness = Front | Central | Back
+
+and Roundedness = Rounded | Unrounded
+
+and PlaceOfArticulation =
+    | Bilabial | Labiodental | Dental
+    | Alveolar | Postalveolar | Retroflex
+    | Palatal | Velar | Uvular
+    | Pharyngeal | Epiglottal | Glottal
+
+and MannerOfArticulation =
+    | Plosive | Nasal | Trill
+    | TapOrFlap | Fricative | LateralFricative
+    | Approximant | LateralApproximant
+
+and Voicing = Voiced | Voiceless
+
+and SecondaryArticulation =
+    | Labialization | Palatalization | Velarization
+    | Pharyngealization | Aspiration
+
+and Tone =
+    | LevelTone of int
+    | ContourTone of int list
+
+and MorphologicalFeature =
+    | RootFeature of string
+    | AffixFeature of AffixType * string
+    | IncorporationFeature of string * MorphologicalFeature
+    | NonConcatenativePattern of string * string
+    | AgglutinativeAffixFeature of AgglutinativeAffixType * string
+    | HonorificFeature of HonorificType * string
+
+and AgglutinativeAffixType = Suffix | Prefix
+
+and HonorificType = VerbHonorific | NounHonorific
+
+and AffixType =
+    | Prefix | Suffix | Infix
+    | Circumfix
+
+type SyntacticFeature =
+    | WordFeature of MorphologicalFeature list * LexicalCategory
+    | PhraseFeature of PhraseType * SyntacticFeature list
+    | GrammaticalRelation of GrammaticalRelationType * SyntacticFeature list
+    | SOVOrderFeature
+    | TopicCommentFeature
+
+and GrammaticalRelationType =
+    | Ergative | Absolutive | Nominative
+    | Accusative
+
+and LexicalCategory =
+    | Noun | Verb | Adjective
+    | Adverb | Pronoun | Preposition
+    | Conjunction | Determiner | Interjection
+
+and PhraseType =
+    | NP | VP | AP
+    | PP | CP
+
+and SemanticFeature =
+    | Meaning of string
+    | SemanticRole of SemanticRoleType * SemanticFeature
+
+and SemanticRoleType =
+    | Agent | Patient | Instrument
+    | Location | Time | Cause
+
+and PragmaticFeature =
+    | UseContext of string
+    | PolitenessLevel of Politeness
+    | SpeechAct of SpeechActType
+    | SpeechLevel of SpeechLevelType
+
+and Politeness = Formal | Informal | Neutral
+
+and SpeechActType =
+    | Assertive | Directive | Commissive
+    | Expressive | Declarative
+
+and SpeechLevelType =
+    | FormalHigh | FormalLow | InformalHigh
+    | InformalLow | Neutral
+
+type LinguisticFeature =
+    | Phonological of PhonologicalFeature
+    | Morphological of MorphologicalFeature
+    | Syntactic of SyntacticFeature
+    | Semantic of SemanticFeature
+    | Pragmatic of PragmaticFeature
+
+type LanguageConstruct =
+    | LanguageElement of LinguisticFeature
+    | LanguageStructure of LanguageConstruct list
+    | TranslationElement of TranslationFeature
+
+and TranslationFeature =
+    | LinkedPhonological of PhonologicalFeature * PhonologicalFeature
+    | LinkedMorphological of MorphologicalFeature * MorphologicalFeature
+    | LinkedSyntactic of SyntacticFeature * SyntacticFeature
+    | LinkedSemantic of SemanticFeature * SemanticFeature
+
+type Discourse = DiscourseUnit of LanguageConstruct list
+
+type LanguageModel =
+    | Model of discourse: Discourse
+
+#!fsharp
+
+let testEnglish =
+    Model(
+        DiscourseUnit [
+            LanguageElement (Phonological (ConsonantFeature (Alveolar, Nasal, Voiced, Some(HalfLong))));
+            LanguageElement (Phonological (VowelFeature (High, Front, Unrounded, Some(LevelTone 1), Some(Primary), Some(Short))));
+            LanguageElement (Phonological (VowelFeature (Low, Front, Unrounded, Some(LevelTone 2), Some(Secondary), Some(Long))));
+            LanguageElement (Phonological (ConsonantFeature (Velar, Plosive, Voiceless, Some(HalfLong))));
+            LanguageElement (Morphological (RootFeature "I"));
+            LanguageElement (Morphological (RootFeature "see"));
+            LanguageElement (Morphological (RootFeature "a"));
+            LanguageElement (Morphological (RootFeature "cat"));
+            LanguageElement (Syntactic (PhraseFeature (NP, [WordFeature ([RootFeature "I"], Pronoun)])));
+            LanguageElement (Syntactic (PhraseFeature (VP, [WordFeature ([RootFeature "see"], Verb)])));
+            LanguageElement (Syntactic (PhraseFeature (NP, [WordFeature ([RootFeature "a"; RootFeature "cat"], Noun)])));
+            LanguageElement (Semantic (Meaning "Perception act of a feline by the speaker"));
+            LanguageElement (Pragmatic (UseContext "Statement of an action being observed"))
+        ]
+    )
+
+let testPortuguese =
+    Model(
+        DiscourseUnit [
+            LanguageElement (Phonological (VowelFeature (High, Front, Unrounded, Some(LevelTone 1), Some(Primary), Some(Short))));
+            LanguageElement (Phonological (VowelFeature (Low, Front, Unrounded, Some(LevelTone 2), Some(Secondary), Some(Long))));
+            LanguageElement (Phonological (VowelFeature (Mid, Back, Rounded, Some(LevelTone 3), Some(Primary), Some(Short))));
+            LanguageElement (Phonological (ConsonantFeature (Velar, Plosive, Voiceless, Some(HalfLong))));
+            LanguageElement (Morphological (RootFeature "Eu"));
+            LanguageElement (Morphological (RootFeature "ver" |> ignore; AffixFeature (Suffix, "o")));
+            LanguageElement (Morphological (RootFeature "um"));
+            LanguageElement (Morphological (RootFeature "gato"));
+            LanguageElement (Syntactic (PhraseFeature (NP, [WordFeature ([RootFeature "Eu"], Pronoun)])));
+            LanguageElement (Syntactic (PhraseFeature (VP, [WordFeature ([RootFeature "vejo"], Verb)])));
+            LanguageElement (Syntactic (PhraseFeature (NP, [WordFeature ([RootFeature "um"; RootFeature "gato"], Noun)])));
+            LanguageElement (Semantic (Meaning "Ação de percepção de um felino pelo falante"));
+            LanguageElement (Pragmatic (UseContext "Declaração de uma ação sendo observada"))
+        ]
+    )
+
+let testKorean =
+    Model(
+        DiscourseUnit [
+            LanguageElement (Phonological (ConsonantFeature (Alveolar, Nasal, Voiced, Some(Short))));
+            LanguageElement (Phonological (VowelFeature (High, Back, Rounded, None, None, Some(Short))));
+            LanguageElement (Phonological (VowelFeature (Mid, Front, Unrounded, None, None, Some(Long))));
+            LanguageElement (Phonological (ConsonantFeature (Bilabial, Plosive, Voiceless, Some(Short))));
+            LanguageElement (Morphological (RootFeature "나"));
+            LanguageElement (Morphological (RootFeature "보다"));
+            LanguageElement (Morphological (AffixFeature (Suffix, "아")));
+            LanguageElement (Morphological (RootFeature "고양이"));
+            LanguageElement (Syntactic (PhraseFeature (NP, [WordFeature ([RootFeature "나"], Pronoun)])));
+            LanguageElement (Syntactic (PhraseFeature (VP, [WordFeature ([RootFeature "보다"; AffixFeature (Suffix, "아")], Verb)])));
+            LanguageElement (Syntactic (PhraseFeature (NP, [WordFeature ([RootFeature "고양이"], Noun)])));
+            LanguageElement (Semantic (Meaning "화자에 의한 고양이의 관찰 행위"));
+            LanguageElement (Pragmatic (UseContext "관찰되고 있는 행동의 진술"))
+        ]
+    )
+
+#!markdown
+
+## main
+
+#!spiral
+
+inl main (_args : array_base string) =
+    0i32
+
+inl main () =
+    $'let main args = !main args' : ()
+
+#!spiral
+
+inl app () =
+    "test" |> console.write_line
+    0i32
+
+inl main () =
+    print_static "<test>"
+
+    app
+    |> dyn
+    |> ignore
+
+    print_static "</test>"

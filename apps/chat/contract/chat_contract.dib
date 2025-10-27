@@ -1,0 +1,672 @@
+#!meta
+
+{"kernelInfo":{"defaultKernelName":"spiral","items":[{"name":"spiral"}]}}
+
+#!markdown
+
+# chat_contract
+
+#!spiral
+
+open rust
+open rust.rust_operators
+
+#!spiral
+
+//// test
+
+open testing
+
+#!markdown
+
+## chat_contract
+
+#!markdown
+
+### state
+
+#!spiral
+
+type state =
+    {
+        version : u32
+        account_set : near.iterable_set near.account_id
+        alias_set : near.iterable_set sm'.std_string
+        account_map : near.lookup_map near.account_id sm'.std_string
+        alias_map : near.lookup_map sm'.std_string (mapm.hash_map near.account_id (u64 * u32))
+    }
+
+#!spiral
+
+//// test
+///! rust -c
+
+()
+
+#!spiral
+
+//// test
+///! rust -c
+
+trace Verbose (fun () => "") id
+
+#!markdown
+
+### new
+
+#!spiral
+
+inl new () : state =
+    {
+        version = 2
+        account_set = "account_set" |> sm'.byte_slice |> near.new_iterable_set
+        alias_set = "alias_set" |> sm'.byte_slice |> near.new_iterable_set
+        account_map = "account_map" |> sm'.byte_slice |> near.new_lookup_map
+        alias_map = "alias_map" |> sm'.byte_slice |> near.new_lookup_map
+    }
+
+#!spiral
+
+//// test
+///! rust -c
+
+inl state = new ()
+trace Verbose (fun () => "chat_contract") fun () => { state = state |> sm'.format_debug }
+trace Verbose (fun () => "") id
+
+#!markdown
+
+### is_valid_alias
+
+#!spiral
+
+inl is_valid_alias (alias : sm'.std_string) : bool =
+    inl alias' = alias |> sm'.from_std_string
+    inl alias_len = alias' |> sm'.length
+
+    alias_len > 0i32
+        && alias_len < 64
+        && (alias' |> sm'.starts_with "-" |> not)
+        && (alias' |> sm'.ends_with "-" |> not)
+        && (alias' |> sm'.as_str |> sm'.chars |> iter.all (fun c => (c |> sm'.char_is_alphanumeric) || c = '-'))
+
+#!spiral
+
+//// test
+///! rust -c
+
+""
+|> sm'.to_std_string
+|> is_valid_alias
+|> _assert_eq false
+
+#!spiral
+
+//// test
+///! rust -c
+
+"a-"
+|> sm'.to_std_string
+|> is_valid_alias
+|> _assert_eq false
+
+#!spiral
+
+//// test
+///! rust -c
+
+"a-a"
+|> sm'.to_std_string
+|> is_valid_alias
+|> _assert_eq true
+
+#!markdown
+
+### generate_cid
+
+#!spiral
+
+inl generate_cid (content : am'.vec u8) : sm'.std_string =
+    !\($'"  fn encode_u64(value: u64) -> Vec<u8> { //"') : ()
+    !\($'"    let mut buffer = unsigned_varint::encode::u64_buffer(); //"') : ()
+    !\($'"    unsigned_varint::encode::u64(value, &mut buffer).to_vec() //"') : ()
+    !\($'"  } //"') : ()
+
+    !\($'"  fn sha256_hash(content: &[u8]) -> Vec<u8> { //"') : ()
+    !\($'"    let mut hasher: sha2::Sha256 = sha2::Digest::new(); //"') : ()
+    !\($'"    sha2::Digest::update(&mut hasher, content); //"') : ()
+    !\($'"    sha2::Digest::finalize(hasher).to_vec() //"') : ()
+    !\($'"  } //"') : ()
+
+    !\($'"  let version: u8 = 1; //"') : ()
+    !\($'"  let codec_raw: u64 = 0x55; //"') : ()
+
+    !\($'"  let codec_bytes = encode_u64(codec_raw); //"') : ()
+    !\($'"  let hash_result = sha256_hash(&!content); //"') : ()
+    !\($'"  let multihash = std::iter::once(0x12) //"') : ()
+    !\($'"    .chain(std::iter::once(32)) //"') : ()
+    !\($'"    .chain(hash_result.into_iter()) //"') : ()
+    !\($'"    .collect(); //"') : ()
+    !\($'"  let cid_bytes = [vec\![version], codec_bytes, multihash].concat(); //"') : ()
+    !\($'"  let result = multibase::encode(multibase::Base::Base32Lower, &cid_bytes); //"') : ()
+    !\($'"result"')
+
+#!spiral
+
+//// test
+///! rust -c -d multibase sha2 unsigned-varint
+
+;[]
+|> am'.to_vec
+|> generate_cid
+|> sm'.from_std_string
+|> _assert_eq "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"
+
+#!markdown
+
+### claim_alias
+
+#!spiral
+
+inl claim_alias (state : rust.ref (rust.mut' state)) (alias : sm'.std_string) : () =
+    inl account_set : rust.ref (rust.mut' (near.iterable_set near.account_id)) =
+        !\($'$"&mut !state.1"')
+
+    inl alias_set : rust.ref (rust.mut' (near.iterable_set sm'.std_string)) =
+        !\($'$"&mut !state.2"')
+
+    inl account_map : rust.ref (rust.mut' (near.lookup_map near.account_id sm'.std_string)) =
+        !\($'$"&mut !state.3"')
+
+    inl alias_map : rust.ref (rust.mut' (near.lookup_map sm'.std_string (mapm.hash_map near.account_id (u64 * u32)))) =
+        !\($'$"&mut !state.4"')
+
+    inl signer_account_id = near.signer_account_id ()
+    inl predecessor_account_id = near.predecessor_account_id ()
+    inl block_timestamp = near.block_timestamp ()
+
+    trace Debug
+        fun () => "chat_contract.claim_alias"
+        fun () => {
+            alias
+            block_timestamp
+            signer_account_id = signer_account_id |> sm'.to_string'
+            predecessor_account_id = predecessor_account_id |> sm'.to_string'
+        }
+
+    if alias |> is_valid_alias |> not
+    then near.panic_str "chat_contract.claim_alias / invalid alias" . true
+    else false
+    |> ignore
+
+    inl account_alias =
+        account_map
+        |> near.lookup_get signer_account_id
+        |> optionm'.cloned
+
+    match account_alias |> optionm'.unbox with
+    | Some account_alias when account_alias =. alias =>
+        trace Warning
+            fun () => "chat_contract.claim_alias / alias already claimed"
+            fun () => { account_alias = account_alias |> sm'.format_debug }
+    | account_alias' =>
+        trace Debug
+            fun () => "chat_contract.claim_alias"
+            fun () => { account_alias = account_alias |> sm'.format_debug }
+
+        match account_alias' with
+        | Some account_alias =>
+            !\($'"    !alias_map //"') : ()
+            !\($'"      .get_mut(&!account_alias) //"') : ()
+            !\($'"      .unwrap() //"') : ()
+            !\\(signer_account_id, $'"      .remove(&$0); //"') : ()
+        | None => ()
+
+        !\\((signer_account_id, alias), $'"  !account_map.insert($0.clone(), $1.clone()); //"') : ()
+
+        account_set |> near.iterable_set_insert signer_account_id |> ignore
+        alias_set |> near.iterable_set_insert alias |> ignore
+
+        !\\(alias, $'"  let new_alias_account_map = match !alias_map.get(&$0) { //"') : ()
+        !\($'"    None => { //"') : ()
+        !\($'"      let mut new_map = std::collections::HashMap::new(); //"') : ()
+        !\\((signer_account_id, block_timestamp), $'"      new_map.insert($0, ($1, 0u32)); //"') : ()
+        !\($'"      new_map //"') : ()
+        !\($'"    } //"') : ()
+        !\($'"    Some(accounts) => { //"') : ()
+        !\($'"      let mut accounts_vec = accounts.iter().collect::<Vec<_>>(); //"') : ()
+        !\($'"      accounts_vec.sort_unstable_by_key(|(_, (_, index))| index); //"') : ()
+        !\($'"      let mut new_map = accounts_vec //"') : ()
+        !\($'"        .iter() //"') : ()
+        !\($'"        .enumerate() //"') : ()
+        !\($'"        .map(|(i, (signer_account_id, (timestamp, _)))| { //"') : ()
+        !\($'"          ((*signer_account_id).clone(), (*timestamp, i as u32)) //"') : ()
+        !\($'"        }) //"') : ()
+        !\($'"        .collect::<std::collections::HashMap<_, _>>(); //"') : ()
+        !\\(signer_account_id, $'"      new_map.insert($0, (!block_timestamp, accounts_vec.len() as u32)); //"') : ()
+        !\($'"      new_map //"') : ()
+        !\($'"    } //"') : ()
+        !\($'"  }; //"') : ()
+
+        !\\(alias, $'"  !alias_map.insert($0, new_alias_account_map); //"') : ()
+
+#!spiral
+
+//// test
+///! rust -c
+
+inl state = new ()
+inl version = state.version
+inl account_set = state.account_set
+inl alias_set = state.alias_set
+inl account_map = state.account_map
+inl alias_map = state.alias_map
+inl version = join version
+inl account_set = join account_set
+inl alias_set = join alias_set
+inl account_map = join account_map
+inl alias_map = join alias_map
+inl state : rust.ref (rust.mut' state) =
+    !\\(
+        version,
+        $'$"&mut ($0, !account_set, !alias_set, !account_map, !alias_map)"'
+    )
+
+"alias1"
+|> sm'.to_std_string
+|> claim_alias state
+
+trace Verbose
+    fun () => "chat_contract"
+    fun () => { state = state |> sm'.format_debug }
+
+trace Debug (fun () => "") id
+
+#!spiral
+
+//// test
+///! rust \"-c=-e=\\\"chat_contract.claim_alias / invalid alias\\\"\"
+
+""
+|> sm'.to_std_string
+|> claim_alias (
+    inl state = new ()
+    inl version = state.version
+    inl account_set = state.account_set
+    inl alias_set = state.alias_set
+    inl account_map = state.account_map
+    inl alias_map = state.alias_map
+    !\\(version, $'$"&mut ($0, !account_set, !alias_set, !account_map, !alias_map)"')
+)
+trace Debug (fun () => "") id
+
+#!spiral
+
+//// test
+///! rust -cd borsh
+
+inl state' = new ()
+inl state = state'
+inl version = state.version
+inl account_set = state.account_set
+inl alias_set = state.alias_set
+inl account_map = state.account_map
+inl alias_map = state.alias_map
+inl version = join version
+inl account_set = join account_set
+inl alias_set = join alias_set
+inl account_map = join account_map
+inl alias_map = join alias_map
+
+inl state =
+    !\\(
+        (version, account_set, alias_set),
+        $'$"&mut ($0, $1, $2, !account_map, !alias_map)"'
+    )
+
+"alias1"
+|> sm'.to_std_string
+|> claim_alias state
+
+"alias1"
+|> sm'.to_std_string
+|> claim_alias state
+
+"alias1"
+|> sm'.to_std_string
+|> claim_alias state
+
+inl account_set' : rust.ref (near.iterable_set near.account_id) =
+    !\($'$"&!state.1"')
+
+inl alias_set' : rust.ref (near.iterable_set sm'.std_string) =
+    !\($'$"&!state.2"')
+
+inl account_set' =
+    account_set'
+    |> iter.iter_ref''
+    |> iter.cloned
+    |> iter_collect
+
+inl alias_set' =
+    alias_set'
+    |> iter.iter_ref''
+    |> iter.cloned
+    |> iter_collect
+    |> am'.vec_map sm'.from_std_string
+
+trace Verbose
+    fun () => "chat_contract"
+    fun () => {
+        account_set' = account_set' |> sm'.format_debug
+        alias_set' = alias_set' |> sm'.format_debug
+        state = state |> sm'.format_debug
+    }
+
+trace Debug (fun () => "") id
+
+account_set'
+|> am'.vec_len
+|> convert
+|> _assert_eq 1u32
+
+alias_set'
+|> am'.from_vec_base
+|> _assert_eq' ;[ "alias1" ]
+
+#!markdown
+
+### get_account_info
+
+#!spiral
+
+inl get_account_info
+    (state : rust.ref state)
+    (account_id : near.account_id)
+    : optionm'.option' (sm'.std_string * (u64 * u32))
+    =
+    inl account_map : rust.ref (near.lookup_map near.account_id sm'.std_string) =
+        !\($'$"&!state.3"')
+
+    inl alias_map : rust.ref (near.lookup_map sm'.std_string (mapm.hash_map near.account_id (u64 * u32))) =
+        !\($'$"&!state.4"')
+
+    (!\\(account_id, $'"true; let result = !account_map.get(&$0).and_then(|alias| { //"') : bool) |> ignore
+    (!\($'"true;    !alias_map.get(alias).map(|accounts| { //"') : bool) |> ignore
+    (!\($'"true;        let result = (alias.clone(), *accounts.get(&!account_id).unwrap()); //"') : bool) |> ignore
+    (!\($'"true;        (result.0, result.1.0, result.1.1)  }) }); //"') : bool) |> ignore
+
+    inl result = !\($'"result"')
+
+    trace Debug
+        fun () => "chat_contract.get_account_info"
+        fun () => { account_id result }
+
+    trace Debug (fun () => "") id
+
+    result
+
+#!spiral
+
+//// test
+///! rust -cd borsh
+
+inl state' = new ()
+inl state = state'
+inl version = state.version
+inl account_set = state.account_set
+inl alias_set = state.alias_set
+inl account_map = state.account_map
+inl alias_map = state.alias_map
+inl version = join version
+inl account_set = join account_set
+inl alias_set = join alias_set
+inl account_map = join account_map
+inl alias_map = join alias_map
+
+inl state_ref_mut =
+    !\\(
+        version,
+        $'$"&mut ($0, !account_set, !alias_set, !account_map, !alias_map)"'
+    )
+
+inl state_ref = !\($'$"!state_ref_mut"')
+near.predecessor_account_id ()
+|> get_account_info state_ref
+|> _assert_eq' (optionm'.none' ())
+
+inl state_ref = !\($'$"!state_ref_mut"')
+near.signer_account_id ()
+|> get_account_info state_ref
+|> _assert_eq' (optionm'.none' ())
+
+"alias1"
+|> sm'.to_std_string
+|> claim_alias state_ref_mut
+
+inl state_ref = !\($'$"!state_ref_mut"')
+near.predecessor_account_id ()
+|> get_account_info state_ref
+|> optionm'.get'
+|> fun alias, (timestamp, i) =>
+    alias
+    |> sm'.from_std_string
+    |> _assert_eq "alias1"
+
+    timestamp
+    |> _assert_gt 0
+
+    i
+    |> _assert_eq 0
+
+inl state_ref = !\($'$"!state_ref_mut"')
+near.signer_account_id ()
+|> get_account_info state_ref
+|> optionm'.get'
+|> fun alias, (timestamp, i) =>
+    alias
+    |> sm'.from_std_string
+    |> _assert_eq "alias1"
+
+    timestamp
+    |> _assert_gt 0
+
+    i
+    |> _assert_eq 0
+
+#!markdown
+
+### main
+
+#!spiral
+
+///! _
+
+inl main () =
+    !\($'"} //"') : ()
+
+    !\($'"\#[near_sdk::near_bindgen] //"') : ()
+
+    !\($'"\#[derive( //"') : ()
+    !\($'"  near_sdk::PanicOnDefault, //"') : ()
+    !\($'"  borsh::BorshDeserialize, //"') : ()
+    !\($'"  borsh::BorshSerialize, //"') : ()
+    !\($'")] //"') : ()
+
+    !\($'"pub struct State ( //"') : ()
+
+    !\($'"/*"') : ()
+    (null () : rust.type_emit state) |> ignore
+    !\($'"*/ )"') : ()
+
+    inl new_ () =
+        !\($'"\#[init] //"') : ()
+        !\($'"pub fn new() -> Self { // 1"') : ()
+
+        (!\($'"true; /*"') : bool) |> ignore
+
+        (null () : rust.type_emit ()) |> ignore
+
+        (!\($'"true; */"') : bool) |> ignore
+
+        inl result = new ()
+
+        $'let _result = !result in _result |> (fun x -> Fable.Core.RustInterop.emitRustExpr x $"Self($0) // x") // 2' : ()
+
+        !\($'"} // 2."') : ()
+
+        !\($'"} // 1."') : ()
+
+        2
+
+    inl is_valid_alias () =
+        !\($'"fn is_valid_alias(alias: String) -> bool { //"') : ()
+        inl alias = !\($'$"alias"')
+        inl result = alias |> is_valid_alias
+        $'let _result = !result in _result |> (fun x -> Fable.Core.RustInterop.emitRustExpr x "$0 }") // 2' : ()
+        !\($'"} //"') : ()
+        1
+
+    inl generate_cid () =
+        !\($'"pub fn generate_cid( //"') : ()
+        !\($'"  &self, //"') : ()
+        !\($'"  content: Vec<u8>, //"') : ()
+        !\($'") -> String { //"') : ()
+        inl content = !\($'$"content"')
+        inl result = generate_cid content
+        $'let _result = !result in _result |> (fun x -> Fable.Core.RustInterop.emitRustExpr x "$0 }") // 2' : ()
+        !\($'"} //"') : ()
+        2
+
+    inl generate_cid_borsh () =
+        !\($'"\#[result_serializer(borsh)] //"') : ()
+        !\($'"pub fn generate_cid_borsh( //"') : ()
+        !\($'"  &self, //"') : ()
+        !\($'"  \#[serializer(borsh)] content: Vec<u8>, //"') : ()
+        !\($'") -> String { //"') : ()
+        !\($'"  self.generate_cid(content) //"') : ()
+        !\($'"} //"') : ()
+        1
+
+    inl claim_alias () =
+        !\($'"pub fn claim_alias( //"') : ()
+        !\($'"  &mut self, //"') : ()
+        !\($'"  alias: String, //"') : ()
+        !\($'") { //"') : ()
+
+        inl state = !\($'$"&mut self.0"')
+        inl alias = !\($'$"alias"')
+
+        inl result = claim_alias state alias
+        trace Debug (fun () => "") (join id)
+
+        !\($'"} //"') : ()
+
+        !\($'"} //"') : ()
+
+        !\($'"} //"') : ()
+
+        3
+
+    inl get_account_info () =
+        !\($'"pub fn get_account_info( //"') : ()
+        !\($'"  &self, //"') : ()
+        !\($'"  account_id: near_sdk::AccountId, //"') : ()
+        !\($'") -> Option<(String, u64, u32)> { //"') : ()
+
+        inl state = !\($'$"&self.0"')
+        inl account_id : near.account_id = !\($'$"account_id"')
+
+        inl result = account_id |> get_account_info state
+        $'let _result = !result in _result |> (fun x -> Fable.Core.RustInterop.emitRustExpr x "$0 } // 4") // 3' : ()
+
+        !\($'"} // 1"') : ()
+
+        1
+
+    inl get_alias_map () =
+        !\($'"pub fn get_alias_map( //"') : ()
+        !\($'"  &self, //"') : ()
+        !\($'"  alias: String, //"') : ()
+        !\($'") -> Option<std::collections::HashMap<near_sdk::AccountId, (u64, u32)>> { //"') : ()
+
+        inl alias_map : rust.ref (near.lookup_map sm'.std_string (mapm.hash_map near.account_id (u64 * u32))) =
+            !\($'$"&self.0.4"')
+
+        inl alias : sm'.std_string = !\($'$"alias"')
+
+        trace Debug
+            fun () => "chat_contract.get_alias_map"
+            fun () => { alias }
+
+        trace Debug (fun () => "") (join id)
+
+        !\\(alias, $'"  !alias_map.get(&$0).cloned() //"') : ()
+        !\($'"} //"') : ()
+
+        !\($'"} //"') : ()
+
+        2
+
+    inl get_alias_map_borsh () =
+        !\($'"\#[result_serializer(borsh)] //"') : ()
+        !\($'"pub fn get_alias_map_borsh( //"') : ()
+        !\($'"  &self, //"') : ()
+        !\($'"  \#[serializer(borsh)] alias: String, //"') : ()
+        !\($'") -> Option<std::collections::HashMap<near_sdk::AccountId, (u64, u32)>> { //"') : ()
+        !\($'"  self.get_alias_map(alias) //"') : ()
+        !\($'"} //"') : ()
+        1
+
+    inl fns =
+        [
+            new_
+            is_valid_alias
+            generate_cid
+            generate_cid_borsh
+            claim_alias
+            get_account_info
+            get_alias_map
+            get_alias_map_borsh
+        ]
+
+    // inl rec 루프 acc fns i =
+    inl rec 루프 forall i {number} j {number}. (acc : i) (fns : list (() -> i)) (i : j) : i =
+        match fns with
+        | [] => acc
+        | x :: xs =>
+            !\($'"\#[near_sdk::near_bindgen] //"') : ()
+            !\($'"impl State { //"') : ()
+            inl n = x ()
+            !\($'"} /* c"') : ()
+            // inl rec 루프' i' =
+            inl rec 루프' forall t {number}. (i' : t) : () =
+                if i' <> 1 // <= n
+                then (!\($'"true; */ // ???? / i: !i / i\': !i' / acc: !acc / n: !n"') : bool) |> ignore
+                else
+                    (!\($'"true; // ??? / i: !i / i\': !i' / acc: !acc / n: !n"') : bool) |> ignore
+                    루프' (i' + 1)
+            루프' 1u8
+            루프 (acc + n) xs (i + 1)
+    inl n = 루프 0u8 fns 1u8
+
+
+    // !\($'"/* a"') : ()
+
+    // !\($'"} // b"') : ()
+
+    !\($'"fn _main() //"') : ()
+    !\($'"{ { //"') : ()
+
+    inl rec 루프' i' =
+        if i' <= n
+        then
+            (!\($'"true; { (); // ?? / i\': !i' / n: !n"') : bool) |> ignore
+            루프' (i' + 1)
+        else
+            (!\($'"true; { { (); // ? / i\': !i' / n: !n"') : bool) |> ignore
+            // (!\($'"true; */ // ?? / i\': !i' / n: !n"') : bool) |> ignore
+    루프' 1u8
+
+inl main () =
+    $'!main |> ignore' : ()

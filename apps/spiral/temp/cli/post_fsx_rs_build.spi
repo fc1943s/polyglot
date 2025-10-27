@@ -1,0 +1,33 @@
+open rust.util
+
+
+inl post_fsx_rs_build (rs_path : path_buf) =
+    inl get_locals () = ;[!>"> post_fsx_rs_build ()"]
+    inl log = new_log UnknownRustTarget (fun () => Debug) get_locals "666666"
+
+    log Debug ;[!>"rs_path"; !>rs_path]
+
+    inl lines =
+        rs_path
+        |> read_lines
+        |> listm.fold
+            fun (i, acc) line =>
+                match i with
+                | _ when
+                        (line |> string_contains "/node_modules/") &&
+                        (line |> string_contains ".cs") =>
+                    log Debug ;[!>"found line. removing."; !>" line"; !>line]
+                    1, acc
+                | 0 => 0, line :: acc
+                | 2 => 0, acc
+                | _ => i + 1, acc
+            (0i32, (Nil : list string))
+        |> snd
+        |> listm.rev
+
+    inl text = lines |> listm.fold (/+) ""
+
+    log Debug ;[!>"text_len"; !>(text |> len)]
+
+    (!!(fs_write rs_path text) : unit') |> ignore
+    log Debug ;[!>"> fs_write rs_path_clean text; ok"]

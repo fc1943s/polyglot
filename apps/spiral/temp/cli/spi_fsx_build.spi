@@ -1,0 +1,292 @@
+open rust.util
+
+
+union supervisor_req =
+    | BuildFile : { spi_path : path_buf; backend : std_string }
+    | FileOpen : { spi_path : path_buf; spi_text : std_string }
+    | Ping : bool
+    | ProjectFileOpen : { spiproj_path : path_buf; spiproj_text : std_string }
+
+
+inl get_req_json = function
+    | BuildFile { spi_path backend } =>
+        "{" /+
+            "\"BuildFile\": {" /+
+                $"\"\\\"uri\\\": \\\"file://\\\".to_owned() + !spi_path.to_str().unwrap(),\"" /+
+                $"\"\\\"backend\\\": !backend\"" /+
+            "}" /+
+        "}"
+    | FileOpen { spi_path spi_text } =>
+        "{" /+
+            "\"FileOpen\": {" /+
+                $"\"\\\"spiText\\\": !spi_text,\"" /+
+                $"\"\\\"uri\\\": \\\"file://\\\".to_owned() + !spi_path.to_str().unwrap()\"" /+
+            "}" /+
+        "}"
+    | Ping ping =>
+        "{" /+
+            $"\"\\\"Ping\\\": !ping\"" /+
+        "}"
+    | ProjectFileOpen { spiproj_path spiproj_text } =>
+        "{" /+
+            "\"ProjectFileOpen\": {" /+
+                $"\"\\\"spiprojText\\\": !spiproj_text,\"" /+
+                $"\"\\\"uri\\\": \\\"file://\\\".to_owned() + !spiproj_path.to_str().unwrap()\"" /+
+            "}" /+
+        "}"
+
+
+inl zmq_request (host : string) (port : u16') (msg : std_string) : std_string =
+    inl get_locals () = ;[!>"> zmq_request ()"]
+    inl log = new_log UnknownRustTarget (fun () => Debug) get_locals "fcfb1b"
+
+    log Debug ;[
+        !>"host"; !>host
+        !>"port"; !>port
+        !>"msg_len"; !>(msg |> len)
+    ]
+
+    inl ctx : any = emit_expr () "zmq::Context::new()"
+    inl sock : any = emit_expr ctx "$0.socket(zmq::REQ).unwrap()"
+    inl endpoint : string = $"$\"tcp://{!host}:{!port}\""
+
+    emit_expr (sock, endpoint) "$0.connect(&$1).unwrap()"
+    emit_expr (sock, msg) $"$\"$0.send($1.as_str(), 0).unwrap()\""
+    inl result : std_string = emit_expr sock "$0.recv_string(0).unwrap().unwrap()"
+
+    emit_expr (sock, endpoint) "$0.disconnect(&$1).unwrap()"
+
+    log Debug ;[!>"result_len"; !>(result |> len)]
+
+    result
+
+
+inl spi_open host port (spi_path : path_buf) (spi_text : std_string) : () =
+    inl get_locals () = ;[!>"> spi_open ()"]
+    inl log = new_log UnknownRustTarget (fun () => Debug) get_locals "e36a62"
+
+    log Debug ;[
+        !>"spi_path"; !>(spi_path |> path_display)
+        !>"spi_text_len"; !>(spi_text |> len)
+    ]
+
+    inl req_json = get_req_json <| FileOpen { spi_path spi_text }
+    inl json = serialize req_json
+
+    log Debug ;[!>"json_len"; !>(json |> len)]
+
+    zmq_request host port json |> ignore
+
+
+inl spiproj_open host port (spiproj_path : path_buf) (spiproj_text : std_string) : () =
+    inl get_locals () = ;[!>"> spiproj_open ()"]
+    inl log = new_log UnknownRustTarget (fun () => Debug) get_locals "e36a62"
+
+    log Debug ;[
+        !>"spiproj_path"; !>(spiproj_path |> path_display)
+        !>"spiproj_text_len"; !>(spiproj_text |> len)
+    ]
+
+    inl req_json = get_req_json <| ProjectFileOpen { spiproj_path spiproj_text }
+    inl json = serialize req_json
+
+    log Debug ;[!>"json_len"; !>(json |> len)]
+
+    zmq_request host port json |> ignore
+
+
+inl ping host port : () =
+    inl get_locals () = ;[!>"> ping ()"]
+    inl log = new_log UnknownRustTarget (fun () => Debug) get_locals "e36a62"
+
+    inl req_json = get_req_json <| Ping true
+    inl json = serialize req_json
+
+    log Debug ;[!>"json_len"; !>(json |> len)]
+
+    zmq_request host port json |> ignore
+
+
+inl spi_build_file host port (spi_path : path_buf) (backend : string) : () =
+    inl get_locals () = ;[!>"> spi_build_file ()"]
+    inl log = new_log UnknownRustTarget (fun () => Debug) get_locals "98d5ef"
+
+    log Debug ;[
+        !>"spi_path"; !>(spi_path |> path_display)
+        !>"backend"; !>backend
+    ]
+
+    inl req_json = get_req_json <| BuildFile { spi_path; backend = backend |> string_slice |> to_std_string }
+    inl json = serialize req_json
+
+    log Debug ;[!>"json_len"; !>(json |> len)]
+
+    zmq_request host port json |> ignore
+
+
+inl spi_to_fsx (spi_path : path_buf) (new_fsx_path : option' path_buf) : string =
+    inl get_locals () = ;[!>"> spi_to_fsx ()"]
+    inl log = new_log UnknownRustTarget (fun () => Debug) get_locals "de884c"
+
+    log Debug ;[
+        !>"pwd"; !>(env_current_dir () |> path_canonicalize |> path_display)
+        !>"spi_path"; !>(spi_path |> path_display)
+        !>"new_fsx_path"; !>(new_fsx_path |> format)
+    ]
+
+    inl src_path = spi_path |> path_parent
+    log Debug ;[!>"src_path"; !>(src_path |> path_display)]
+
+    inl spiproj_path =
+        src_path
+        |> path_ancestors
+        |> take $"unativeint 10"
+        |> map (path_join "package.spiproj")
+        |> find path_exists
+        |> (~!!)
+    log Debug ;[!>"spiproj_path"; !>(spiproj_path |> path_display)]
+
+    inl fsx_path =
+        spi_path
+        |> path_to_str
+        |> ((~!!) : _ -> ref' str)
+        |> new_string
+        |> string_replace ".spir" ".spi"
+        |> string_replace ".spi" ".fsx"
+        |> string_slice
+        |> to_std_string
+        |> to_path_buf
+        |> path_canonicalize
+    log Debug ;[!>"fsx_path"; !>(fsx_path |> path_display)]
+
+    (!!(fs_write fsx_path "") : unit') |> ignore
+    log Debug ;[!>"> fs_write fsx_path \"\"; ok"]
+
+
+    inl host = "127.0.0.1"
+
+    inl port : u16' = 13805i32 |> try_into
+    // inl port : u16' = port |> get_available_port
+
+    log Debug ;[!>"port"; !>port]
+
+    inl path = "../The-Spiral-Language/The Spiral Language 2/bin/Release/net7.0/Spiral.dll" |> raw_string_literal
+    inl command = "dotnet" |> raw_string_literal
+    inl command : any = emit_expr () $"\"std::process::Command::new(!command)\""
+    emit_expr () $"\"let mut !command = !command\""
+    inl command : any = emit_expr () $"\"!command.arg(!path)\""
+    inl port_arg = "port=" /+ (port |> to_string') |> string_slice |> to_std_string
+    inl command : any = emit_expr () $"\"!command.arg(!port_arg)\""
+    inl command : any = emit_expr () $"\"!command.stdout(std::process::Stdio::inherit())\""
+    inl command : any = emit_expr () $"\"!command.stderr(std::process::Stdio::inherit())\""
+    inl process : result' process_child io_error = emit_expr () $"\"!command.spawn()\""
+    inl process : process_child = emit_expr () $"\"!process.unwrap()\""
+
+    log Debug ;[!>"process"; !>(process |> format)]
+
+    inl addr = new_socket_addr port
+    // inl port2 = emit_expr () $"\"!port + 10\""
+    // inl addr2 = new_socket_addr port2
+
+    inl block_on (code : string) : () =
+        inl rt : any = emit_expr () $"\"tokio::runtime::Builder::new_current_thread()\""
+        emit_expr () $"\"let mut !rt = !rt\""
+        inl rt : any = emit_expr () $"\"!rt.enable_all()\""
+        inl rt : any = emit_expr () $"\"!rt.build()\""
+        inl rt : any = emit_expr () $"\"!rt.unwrap()\""
+        emit_expr () ($"\"!rt.block_on(\"" /+ code /+ $"\")\"")
+
+    block_on
+        ($"\"async move {\"" /+
+        $"\"     loop {\"" /+
+        $"\"         let result = std::net::TcpStream::connect(&!addr);\"" /+
+        $"\"         println!!(\\\"connect_timeout: {:?}\\\", result);\"" /+
+        $"\"         if result.is_ok() {\"" /+
+        $"\"             tokio::time::sleep(std::time::Duration::from_secs(1)).await;\"" /+
+        $"\"             break;\"" /+
+        $"\"         } else {\"" /+
+        $"\"             tokio::time::sleep(std::time::Duration::from_millis(60)).await;\"" /+
+        $"\"         }\"" /+
+        $"\"     }\"" /+
+        $"\" }\"")
+        // $"\"     let listener = std::net::TcpListener::bind(&!addr2).unwrap();\"" /+
+        // $"\"     let (stream, _) = listener.accept().unwrap();\"" /+
+        // $"\"     let stream = tokio::net::TcpStream::from_std(stream).unwrap();\"" /+
+        // $"\"     println!!(\\\"stream: {:?}\\\", stream);\"" /+
+        // $"\"     let child_stream = std::net::TcpStream::connect(&!addr).unwrap();\"" /+
+        // $"\"     let child_stream = tokio::net::TcpStream::from_std(child_stream).unwrap();\"" /+
+        // $"\"     child_stream.set_nodelay(true).unwrap();\"" /+
+        // $"\"     println!!(\\\"child_stream: {:?}\\\", child_stream);\"" /+
+        // $"\"     let (mut reader, writer) = tokio::io::split(stream);\"" /+
+        // $"\"     let (child_reader, mut child_writer) = tokio::io::split(child_stream);\"" /+
+        // $"\"     let mut buf = [0u8; 1024];\"" /+
+        // $"\"     loop {\"" /+
+        // $"\"         let read = tokio::io::AsyncReadExt::read(&mut reader, &mut buf);\"" /+
+        // $"\"         println!!(\\\"read: {:?}\\\", read);\"" /+
+        // $"\"         let read = read.await;\"" /+
+        // $"\"         println!!(\\\"read: {:?}\\\", read);\"" /+
+        // $"\"         if read.is_err() {\"" /+
+        // $"\"             break;\"" /+
+        // $"\"         }\"" /+
+        // $"\"         let read = read.unwrap();\"" /+
+        // $"\"         if read == 0 {\"" /+
+        // $"\"             break;\"" /+
+        // $"\"         }\"" /+
+        // $"\"         let write = tokio::io::AsyncWriteExt::write(&mut child_writer, &buf[..read]);\"" /+
+        // $"\"         println!!(\\\"write: {:?}\\\", write);\"" /+
+        // $"\"         let write = write.await;\"" /+
+        // $"\"         println!!(\\\"write: {:?}\\\", write);\"" /+
+        // $"\"         if write.is_err() {\"" /+
+        // $"\"             break;\"" /+
+        // $"\"         }\"" /+
+        // $"\"     }\"" /+
+        // $"\" }\"")
+
+
+    // inl port = port2
+
+    ping host port
+    log Debug ;[!>"> ping; ok"]
+
+    spi_open host port spi_path !!(fs_read_to_string spi_path)
+    log Debug ;[!>"> spi_open; ok"]
+
+    ping host port
+    log Debug ;[!>"> ping; ok"]
+
+    inl base_spiproj_path =
+        "../The-Spiral-Language/VS Code Plugin/core/package.spiproj"
+        |> raw_string_literal
+        |> to_path_buf
+        |> path_canonicalize
+
+    spiproj_open host port base_spiproj_path !!(fs_read_to_string base_spiproj_path)
+    log Debug ;[!>"> spiproj_open base_spiproj_path; ok"]
+
+    spiproj_open host port spiproj_path !!(fs_read_to_string spiproj_path)
+    log Debug ;[!>"> spiproj_open spiproj_path; ok"]
+
+    ping host port
+    log Debug ;[!>"> ping; ok"]
+
+    spi_build_file host port spi_path "Fsharp"
+    log Debug ;[!>"> spi_build_file; ok"]
+
+    ping host port
+    log Debug ;[!>"> ping; ok"]
+
+    inl new_fsx = wait_file_change fsx_path
+    log Debug ;[!>"new_fsx_len"; !>(new_fsx |> len)]
+
+    ping host port
+    log Debug ;[!>"> ping; ok"]
+
+
+    inl output : any = emit_expr () $"\"!process.wait_with_output().unwrap()\""
+    log Debug ;[!>"output"; !>(output |> format)]
+
+
+    (!!(fs_write (new_fsx_path |> unwrap_or fsx_path) new_fsx) : unit') |> ignore
+    log Debug ;[!>"> fs_write new_fsx_path; ok"]
+
+    new_fsx

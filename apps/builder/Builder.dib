@@ -1,0 +1,339 @@
+#!meta
+
+{"kernelInfo":{"defaultKernelName":"spiral","items":[{"name":"spiral"}]}}
+
+#!markdown
+
+# Builder (Polyglot)
+
+#!fsharp
+
+#r @"../../../../../../../.nuget/packages/fsharp.control.asyncseq/3.2.1/lib/netstandard2.1/FSharp.Control.AsyncSeq.dll"
+#r @"../../../../../../../.nuget/packages/system.reactive/6.0.1-preview.1/lib/net6.0/System.Reactive.dll"
+#r @"../../../../../../../.nuget/packages/system.reactive.linq/6.0.1-preview.1/lib/netstandard2.0/System.Reactive.Linq.dll"
+#r @"../../../../../../../.nuget/packages/argu/6.2.4/lib/netstandard2.0/Argu.dll"
+
+#!fsharp
+
+#!import ../../lib/fsharp/Notebooks.dib
+#!import ../../lib/fsharp/Testing.dib
+
+#!fsharp
+
+#!import ../../lib/fsharp/Common.fs
+#!import ../../lib/fsharp/CommonFSharp.fs
+#!import ../../lib/fsharp/Async.fs
+#!import ../../lib/fsharp/AsyncSeq.fs
+#!import ../../lib/fsharp/Runtime.fs
+#!import ../../lib/fsharp/FileSystem.fs
+
+#!fsharp
+
+#if !INTERACTIVE
+open Lib
+#endif
+
+#!fsharp
+
+open Common
+open SpiralFileSystem.Operators
+
+#!markdown
+
+## buildProject
+
+#!fsharp
+
+let inline buildProject runtime outputDir path = async {
+    let fullPath = path |> System.IO.Path.GetFullPath
+    let fileDir = fullPath |> System.IO.Path.GetDirectoryName
+    let extension = fullPath |> System.IO.Path.GetExtension
+
+    trace Debug
+        (fun () -> "buildProject")
+        (fun () -> $"fullPath: {fullPath} / {_locals ()}")
+
+    match extension with
+    | ".fsproj" -> ()
+    | _ -> failwith "Invalid project file"
+
+    let runtimes =
+        runtime
+        |> Option.map List.singleton
+        |> Option.defaultValue [ "linux-x64"; "win-x64" ]
+
+    let outputDir = outputDir |> Option.defaultValue "dist"
+
+    let! exitCodes =
+        runtimes
+        |> List.map (fun runtime -> async {
+            let command = $@"dotnet publish ""{fullPath}"" --configuration Release --output ""{outputDir}"" --runtime {runtime}"
+            let! exitCode, _result =
+                SpiralRuntime.execution_options (fun x ->
+                    { x with
+                        l0 = command
+                        l6 = Some fileDir
+                    }
+                )
+                |> SpiralRuntime.execute_with_options_async
+            return exitCode
+        })
+        |> Async.Sequential
+        |> Async.map Array.sum
+
+    if "CI" |> System.Environment.GetEnvironmentVariable |> System.String.IsNullOrEmpty |> not then
+        do! fileDir </> "bin" |> SpiralFileSystem.delete_directory_async |> Async.Ignore
+        do! fileDir </> "obj" |> SpiralFileSystem.delete_directory_async |> Async.Ignore
+
+    return exitCodes
+}
+
+#!markdown
+
+## persistCodeProject
+
+#!fsharp
+
+let inline persistCodeProject packages modules name hash code = async {
+    trace Debug
+        (fun () -> "persistCodeProject")
+        (fun () -> $"packages: {packages} / modules: {modules} / name: {name} / hash: {hash} / code.Length: {code |> String.length} / {_locals ()}")
+
+    let workspaceRoot = SpiralFileSystem.get_workspace_root ()
+
+    let targetDir =
+        let targetDir = workspaceRoot </> "target/Builder" </> name
+        match hash with
+        | Some hash -> targetDir </> "packages" </> hash
+        | None -> targetDir
+    targetDir |> System.IO.Directory.CreateDirectory |> ignore
+
+    let filePath = targetDir </> $"{name}.fs" |> System.IO.Path.GetFullPath
+    do! code |> SpiralFileSystem.write_all_text_exists filePath
+
+    let modulesCode =
+        modules
+        |> List.map (fun path -> $"""<Compile Include="{workspaceRoot </> path}" />""")
+        |> SpiralSm.concat "\n        "
+
+    let fsprojPath = targetDir </> $"{name}.fsproj"
+    let fsprojCode = $"""<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <LangVersion>preview</LangVersion>
+        <RollForward>Major</RollForward>
+        <TargetLatestRuntimePatch>true</TargetLatestRuntimePatch>
+        <ServerGarbageCollection>true</ServerGarbageCollection>
+        <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+        <PublishAot>false</PublishAot>
+        <PublishTrimmed>false</PublishTrimmed>
+        <PublishSingleFile>true</PublishSingleFile>
+        <SelfContained>true</SelfContained>
+        <Version>0.0.1-alpha.1</Version>
+        <OutputType>Exe</OutputType>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('FreeBSD'))">
+        <DefineConstants>_FREEBSD</DefineConstants>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Linux'))">
+        <DefineConstants>_LINUX</DefineConstants>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+        <DefineConstants>_OSX</DefineConstants>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+        <DefineConstants>_WINDOWS</DefineConstants>
+    </PropertyGroup>
+
+    <ItemGroup>
+        {modulesCode}
+        <Compile Include="{filePath}" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    </ItemGroup>
+
+    <Import Project="{workspaceRoot}/.paket/Paket.Restore.targets" />
+</Project>
+"""
+    do! fsprojCode |> SpiralFileSystem.write_all_text_exists fsprojPath
+
+    let paketReferencesPath = targetDir </> "paket.references"
+    let paketReferencesCode =
+        "FSharp.Core" :: packages
+        |> SpiralSm.concat "\n"
+    do! paketReferencesCode |> SpiralFileSystem.write_all_text_exists paketReferencesPath
+
+    return fsprojPath
+}
+
+#!markdown
+
+## buildCode
+
+#!fsharp
+
+let inline buildCode runtime packages modules outputDir name code = async {
+    let! fsprojPath = code |> persistCodeProject packages modules name None
+    let! exitCode = fsprojPath |> buildProject runtime outputDir
+    if exitCode <> 0 then
+        trace Critical
+            (fun () -> "buildCode")
+            (fun () -> $"code: {code |> SpiralSm.ellipsis_end 400} / {_locals ()}")
+    return exitCode
+}
+
+#!fsharp
+
+//// test
+
+"1 + 1 |> ignore"
+|> buildCode None [] [] None "test1"
+|> Async.runWithTimeout 300000
+|> _assertEqual (Some 0)
+
+#!fsharp
+
+//// test
+
+"1 + a |> ignore"
+|> buildCode None [] [] None "test2"
+|> Async.runWithTimeout 300000
+|> _assertEqual (Some 2)
+
+#!markdown
+
+## readFile
+
+#!fsharp
+
+let inline readFile path = async {
+    let! code = path |> SpiralFileSystem.read_all_text_async
+
+    let code = System.Text.RegularExpressions.Regex.Replace (
+        code,
+        @"( *)(let\s+main\s+\w+\s*=)",
+        fun m -> m.Groups.[1].Value + "[<EntryPoint>]\n" + m.Groups.[1].Value + m.Groups.[2].Value
+    )
+
+    let codeTrim = code |> SpiralSm.trim_end [||]
+    return
+        if codeTrim |> SpiralSm.ends_with "\n()"
+        then codeTrim |> SpiralSm.slice 0 ((codeTrim |> String.length) - 3)
+        else code
+}
+
+#!markdown
+
+## buildFile
+
+#!fsharp
+
+let inline buildFile runtime packages modules path = async {
+    let fullPath = path |> System.IO.Path.GetFullPath
+    let dir = fullPath |> System.IO.Path.GetDirectoryName
+    let name = fullPath |> System.IO.Path.GetFileNameWithoutExtension
+    let! code = fullPath |> readFile
+    return! code |> buildCode runtime packages modules (dir </> "dist" |> Some) name
+}
+
+#!markdown
+
+## persistFile
+
+#!fsharp
+
+let inline persistFile packages modules path = async {
+    let fullPath = path |> System.IO.Path.GetFullPath
+    let name = fullPath |> System.IO.Path.GetFileNameWithoutExtension
+    let! code = fullPath |> readFile
+    return! code |> persistCodeProject packages modules name None
+}
+
+#!markdown
+
+## Arguments
+
+#!fsharp
+
+[<RequireQualifiedAccess>]
+type Arguments =
+    | [<Argu.ArguAttributes.MainCommand; Argu.ArguAttributes.ExactlyOnce>] Path of path : string
+    | [<Argu.ArguAttributes.Unique>] Packages of packages : string list
+    | [<Argu.ArguAttributes.Unique>] Modules of modules : string list
+    | [<Argu.ArguAttributes.Unique>] Runtime of runtime : string
+    | [<Argu.ArguAttributes.Unique>] Persist_Only
+
+    interface Argu.IArgParserTemplate with
+        member s.Usage =
+            match s with
+            | Path _ -> nameof Path
+            | Packages _ -> nameof Packages
+            | Modules _ -> nameof Modules
+            | Runtime _ -> nameof Runtime
+            | Persist_Only -> nameof Persist_Only
+
+#!fsharp
+
+//// test
+
+Argu.ArgumentParser.Create<Arguments>().PrintUsage ()
+
+#!markdown
+
+## main
+
+#!fsharp
+
+let main args =
+    let argsMap = args |> Runtime.parseArgsMap<Arguments>
+
+    let path =
+        match argsMap.[nameof Arguments.Path] with
+        | [ Arguments.Path path ] -> Some path
+        | _ -> None
+        |> Option.get
+
+    let packages =
+        match argsMap |> Map.tryFind (nameof Arguments.Packages) with
+        | Some [ Arguments.Packages packages ] -> packages
+        | _ -> []
+
+    let modules =
+        match argsMap |> Map.tryFind (nameof Arguments.Modules) with
+        | Some [ Arguments.Modules modules ] -> modules
+        | _ -> []
+
+    let runtime =
+        match argsMap |> Map.tryFind (nameof Arguments.Runtime) with
+        | Some [ Arguments.Runtime runtime ] -> Some runtime
+        | _ -> None
+
+    let persistOnly = argsMap |> Map.containsKey (nameof Arguments.Persist_Only)
+
+    if persistOnly
+    then path |> persistFile packages modules |> Async.map (fun _ -> 0)
+    else path |> buildFile runtime packages modules
+    |> Async.runWithTimeout (60001 * 60 * 24)
+    |> function
+        | Some exitCode -> exitCode
+        | None -> 1
+
+#!fsharp
+
+//// test
+
+let args =
+    System.Environment.GetEnvironmentVariable "ARGS"
+    |> SpiralRuntime.split_args
+    |> Result.toArray
+    |> Array.collect id
+
+match args with
+| [||] -> 0
+| args -> if main args = 0 then 0 else failwith "main failed"

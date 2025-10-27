@@ -1,0 +1,26 @@
+cargo-features = ["edition2024"]
+
+[package]
+name = "chat_contract"
+workspace = "../../../workspace"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+path = "chat_contract.rs"
+
+[dependencies]
+inline_colorization = { workspace = true }
+fable_library_rust = { workspace = true, features = ["atomic"] }
+sha2 = { workspace = true }
+borsh = "1.5"
+multibase = ">=0.9,<1"
+near-sdk = "=5.11.0"
+unsigned-varint = ">=0.8,<1"
+crypto-common = "=0.2.0-rc.1"
+block-buffer = "=0.11.0-rc.1"
+const-oid = "=0.10.0-rc.0"
+base64ct = "=1.7.3"

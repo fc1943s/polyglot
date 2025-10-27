@@ -1,0 +1,6 @@
+packageDir: ../../deps/spiral/lib
+packages:
+    |core-
+    spiral-
+modules:
+    math

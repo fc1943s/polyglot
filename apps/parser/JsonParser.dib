@@ -1,0 +1,857 @@
+#!meta
+
+{"kernelInfo":{"defaultKernelName":"spiral","items":[{"aliases":[],"name":"spiral"}]}}
+
+#!markdown
+
+# JsonParser (Polyglot)
+
+#!fsharp
+
+#!import ../../lib/fsharp/Notebooks.dib
+#!import ../../lib/fsharp/Testing.dib
+
+#!fsharp
+
+#!import ../../lib/fsharp/Common.fs
+#!import Parser.fs
+
+#!fsharp
+
+open Common
+open Parser
+
+#!markdown
+
+## JsonParser
+
+#!fsharp
+
+(*
+// --------------------------------
+JSON spec from http://www.json.org/
+// --------------------------------
+
+The JSON spec is available at [json.org](http://www.json.org/). I'll paraphase it here:
+
+* A `value` can be a `string` or a `number` or a `bool` or `null` or an `object` or an `array`.
+  * These structures can be nested.
+* A `string` is a sequence of zero or more Unicode characters, wrapped in double quotes, using backslash escapes.
+* A `number` is very much like a C or Java number, except that the octal and hexadecimal formats are not used.
+* A `boolean` is the literal `true` or `false`
+* A `null` is the literal `null`
+* An `object` is an unordered set of name/value pairs.
+  * An object begins with { (left brace) and ends with } (right brace).
+  * Each name is followed by : (colon) and the name/value pairs are separated by , (comma).
+* An `array` is an ordered collection of values.
+  * An array begins with [ (left bracket) and ends with ] (right bracket).
+  * Values are separated by , (comma).
+* Whitespace can be inserted between any pair of tokens.
+*)
+
+#!fsharp
+
+//// test
+
+let inline parserEqual (expected : ParseResult<'a>) (actual : ParseResult<'a * Input>) =
+    match actual, expected with
+    | Success (_actual, _), Success _expected ->
+        printResult actual
+        _actual |> _assertEqual _expected
+    | Failure (l1, e1, p1), Failure (l2, e2, p2) when l1 = l2 && e1 = e2 && p1 = p2 ->
+        printResult actual
+    | _ ->
+        printfn $"Actual: {actual}"
+        printfn $"Expected: {expected}"
+        failwith "Parse failed"
+    actual
+
+#!markdown
+
+### JValue
+
+#!fsharp
+
+type JValue =
+    | JString of string
+    | JNumber of float
+    | JBool   of bool
+    | JNull
+    | JObject of Map<string, JValue>
+    | JArray  of JValue list
+
+#!fsharp
+
+let jValue, jValueRef = createParserForwardedToRef<JValue> ()
+
+#!markdown
+
+### jNull
+
+#!fsharp
+
+let jNull =
+    pstring "null"
+    >>% JNull
+    <?> "null"
+
+#!fsharp
+
+//// test
+
+jValueRef <|
+    choice
+        [
+            jNull
+        ]
+
+#!fsharp
+
+//// test
+
+run jValue "null"
+|> parserEqual (Success JNull)
+
+#!fsharp
+
+//// test
+
+run jNull "nulp"
+|> parserEqual (
+    Failure (
+        "null",
+        "Unexpected 'p'",
+        { currentLine = "nulp"; line = 0; column = 3 }
+    )
+)
+
+#!markdown
+
+### jBool
+
+#!fsharp
+
+let jBool =
+    let jtrue =
+        pstring "true"
+        >>% JBool true
+    let jfalse =
+        pstring "false"
+        >>% JBool false
+
+    jtrue <|> jfalse
+    <?> "bool"
+
+#!fsharp
+
+//// test
+
+jValueRef <|
+    choice
+        [
+            jNull
+            jBool
+        ]
+
+#!fsharp
+
+//// test
+
+run jBool "true"
+|> parserEqual (Success (JBool true))
+
+#!fsharp
+
+//// test
+
+run jBool "false"
+|> parserEqual (Success (JBool false))
+
+#!fsharp
+
+//// test
+
+run jBool "truX"
+|> parserEqual (
+    Failure (
+        "bool",
+        "Unexpected 't'",
+        { currentLine = "truX"; line = 0; column = 0 }
+    )
+)
+
+#!markdown
+
+### jUnescapedChar
+
+#!fsharp
+
+let jUnescapedChar =
+    satisfy (fun ch -> ch <> '\\' && ch <> '\"') "char"
+
+#!fsharp
+
+//// test
+
+run jUnescapedChar "a"
+|> parserEqual (Success 'a')
+
+#!fsharp
+
+//// test
+
+run jUnescapedChar "\\"
+|> parserEqual (
+    Failure (
+        "char",
+        "Unexpected '\\'",
+        { currentLine = "\\"; line = 0; column = 0 }
+    )
+)
+
+#!markdown
+
+### jEscapedChar
+
+#!fsharp
+
+let jEscapedChar =
+    [
+        ("\\\"",'\"')
+        ("\\\\",'\\')
+        ("\\/",'/')
+        ("\\b",'\b')
+        ("\\f",'\f')
+        ("\\n",'\n')
+        ("\\r",'\r')
+        ("\\t",'\t')
+    ]
+    |> List.map (fun (toMatch, result) ->
+        pstring toMatch >>% result
+    )
+    |> choice
+    <?> "escaped char"
+
+#!fsharp
+
+//// test
+
+run jEscapedChar "\\\\"
+|> parserEqual (Success '\\')
+
+#!fsharp
+
+//// test
+
+run jEscapedChar "\\t"
+|> parserEqual (Success '\t')
+
+#!fsharp
+
+//// test
+
+run jEscapedChar @"\\"
+|> parserEqual (Success '\\')
+
+#!fsharp
+
+//// test
+
+run jEscapedChar @"\n"
+|> parserEqual (Success '\n')
+
+#!fsharp
+
+//// test
+
+run jEscapedChar "a"
+|> parserEqual (
+    Failure (
+        "escaped char",
+        "Unexpected 'a'",
+        { currentLine = "a"; line = 0; column = 0 }
+    )
+)
+
+#!markdown
+
+### jUnicodeChar
+
+#!fsharp
+
+let jUnicodeChar =
+    let backslash = pchar '\\'
+    let uChar = pchar 'u'
+    let hexdigit = anyOf ([ '0' .. '9' ] @ [ 'A' .. 'F' ] @ [ 'a' .. 'f' ])
+    let fourHexDigits = hexdigit .>>. hexdigit .>>. hexdigit .>>. hexdigit
+
+    let inline convertToChar (((h1, h2), h3), h4) =
+        let str = $"%c{h1}%c{h2}%c{h3}%c{h4}"
+        Int32.Parse (str, Globalization.NumberStyles.HexNumber) |> char
+
+    backslash >>. uChar >>. fourHexDigits
+    |>> convertToChar
+
+#!fsharp
+
+//// test
+
+run jUnicodeChar "\\u263A"
+|> parserEqual (Success '☺')
+
+#!markdown
+
+### jString
+
+#!fsharp
+
+let quotedString =
+    let quote = pchar '\"' <?> "quote"
+    let jchar = jUnescapedChar <|> jEscapedChar <|> jUnicodeChar
+
+    quote >>. manyChars jchar .>> quote
+
+#!fsharp
+
+let jString =
+    quotedString
+    |>> JString
+    <?> "quoted string"
+
+#!fsharp
+
+//// test
+
+jValueRef <|
+    choice
+        [
+            jNull
+            jBool
+            jString
+        ]
+
+#!fsharp
+
+//// test
+
+run jString "\"\""
+|> parserEqual (Success (JString ""))
+
+#!fsharp
+
+//// test
+
+run jString "\"a\""
+|> parserEqual (Success (JString "a"))
+
+#!fsharp
+
+//// test
+
+run jString "\"ab\""
+|> parserEqual (Success (JString "ab"))
+
+#!fsharp
+
+//// test
+
+run jString "\"ab\\tde\""
+|> parserEqual (Success (JString "ab\tde"))
+
+#!fsharp
+
+//// test
+
+run jString "\"ab\\u263Ade\""
+|> parserEqual (Success (JString "ab☺de"))
+
+#!markdown
+
+### jNumber
+
+#!fsharp
+
+let jNumber =
+    let optSign = opt (pchar '-')
+
+    let zero = pstring "0"
+
+    let digitOneNine =
+        satisfy (fun ch -> Char.IsDigit ch && ch <> '0') "1-9"
+
+    let digit =
+        satisfy Char.IsDigit "digit"
+
+    let point = pchar '.'
+
+    let e = pchar 'e' <|> pchar 'E'
+
+    let optPlusMinus = opt (pchar '-' <|> pchar '+')
+
+    let nonZeroInt =
+        digitOneNine .>>. manyChars digit
+        |>> fun (first, rest) -> string first + rest
+
+    let intPart = zero <|> nonZeroInt
+
+    let fractionPart = point >>. manyChars1 digit
+
+    let exponentPart = e >>. optPlusMinus .>>. manyChars1 digit
+
+    let inline (|>?) opt f =
+        match opt with
+        | None -> ""
+        | Some x -> f x
+
+    let inline convertToJNumber (((optSign, intPart), fractionPart), expPart) =
+        let signStr =
+            optSign
+            |>? string
+
+        let fractionPartStr =
+            fractionPart
+            |>? (fun digits -> "." + digits)
+
+        let expPartStr =
+            expPart
+            |>? fun (optSign, digits) ->
+                let sign = optSign |>? string
+                "e" + sign + digits
+
+        (signStr + intPart + fractionPartStr + expPartStr)
+        |> float
+        |> JNumber
+
+    optSign .>>. intPart .>>. opt fractionPart .>>. opt exponentPart
+    |>> convertToJNumber
+    <?> "number"
+
+#!fsharp
+
+//// test
+
+jValueRef <|
+    choice
+        [
+            jNull
+            jBool
+            jString
+            jNumber
+        ]
+
+#!fsharp
+
+//// test
+
+run jNumber "123"
+|> parserEqual (Success (JNumber 123.0))
+
+#!fsharp
+
+//// test
+
+run jNumber "-123"
+|> parserEqual (Success (JNumber -123.0))
+
+#!fsharp
+
+//// test
+
+run jNumber "123.4"
+|> parserEqual (Success (JNumber 123.4))
+
+#!fsharp
+
+//// test
+
+run jNumber "-123."
+|> parserEqual (Success (JNumber -123.0))
+
+#!fsharp
+
+//// test
+
+run jNumber "00.1"
+|> parserEqual (Success (JNumber 0.0))
+
+#!fsharp
+
+//// test
+
+let jNumber_ = jNumber .>> spaces1
+
+#!fsharp
+
+//// test
+
+run jNumber_ "123"
+|> parserEqual (Success (JNumber 123.0))
+
+#!fsharp
+
+//// test
+
+run jNumber_ "-123"
+|> parserEqual (Success (JNumber -123.0))
+
+#!fsharp
+
+//// test
+
+run jNumber_ "-123."
+|> parserEqual (
+    Failure (
+        "number andThen many1 whitespace",
+        "Unexpected '.'",
+        { currentLine = "-123."; line = 0; column = 4 }
+    )
+)
+
+#!fsharp
+
+//// test
+
+run jNumber_ "123.4"
+|> parserEqual (Success (JNumber 123.4))
+
+#!fsharp
+
+//// test
+
+run jNumber_ "00.4"
+|> parserEqual (
+    Failure (
+        "number andThen many1 whitespace",
+        "Unexpected '0'",
+        { currentLine = "00.4"; line = 0; column = 1 }
+    )
+)
+
+#!fsharp
+
+//// test
+
+run jNumber_ "123e4"
+|> parserEqual (Success (JNumber 1230000.0))
+
+#!fsharp
+
+//// test
+
+run jNumber_ "123.4e5"
+|> parserEqual (Success (JNumber 12340000.0))
+
+#!fsharp
+
+//// test
+
+run jNumber_ "123.4e-5"
+|> parserEqual (Success (JNumber 0.001234))
+
+#!markdown
+
+### jArray
+
+#!fsharp
+
+let jArray =
+    let left = pchar '[' .>> spaces
+    let right = pchar ']' .>> spaces
+    let comma = pchar ',' .>> spaces
+    let value = jValue .>> spaces
+
+    let values = sepBy value comma
+
+    between left values right
+    |>> JArray
+    <?> "array"
+
+#!fsharp
+
+//// test
+
+jValueRef <|
+    choice
+        [
+            jNull
+            jBool
+            jString
+            jNumber
+            jArray
+        ]
+
+#!fsharp
+
+//// test
+
+run jArray "[ 1, 2 ]"
+|> parserEqual (Success (JArray [ JNumber 1.0; JNumber 2.0 ]))
+
+#!fsharp
+
+//// test
+
+run jArray "[ 1, 2, ]"
+|> parserEqual (
+    Failure (
+        "array",
+        "Unexpected ','",
+        { currentLine = "[ 1, 2, ]"; line = 0; column = 6 }
+    )
+)
+
+#!markdown
+
+### jObject
+
+#!fsharp
+
+let jObject =
+    let left = spaces >>. pchar '{' .>> spaces
+    let right = pchar '}' .>> spaces
+    let colon = pchar ':' .>> spaces
+    let comma = pchar ',' .>> spaces
+    let key = quotedString .>> spaces
+    let value = jValue .>> spaces
+
+    let keyValue = (key .>> colon) .>>. value
+    let keyValues = sepBy keyValue comma
+
+    between left keyValues right
+    |>> Map.ofList
+    |>> JObject
+    <?> "object"
+
+#!fsharp
+
+jValueRef <|
+    choice
+        [
+            jNull
+            jBool
+            jString
+            jNumber
+            jArray
+            jObject
+        ]
+
+#!fsharp
+
+//// test
+
+run jObject """{ "a":1, "b"  :  2 }"""
+|> parserEqual (
+    Success (
+        JObject (
+            Map.ofList [
+                "a", JNumber 1.0
+                "b", JNumber 2.0
+            ]
+        )
+    )
+)
+
+#!fsharp
+
+//// test
+
+run jObject """{ "a":1, "b"  :  2, }"""
+|> parserEqual (
+    Failure (
+        "object",
+        "Unexpected ','",
+        { currentLine = """{ "a":1, "b"  :  2, }"""; line = 0; column = 18 }
+    )
+)
+
+#!markdown
+
+### jValue
+
+#!fsharp
+
+//// test
+
+let example1 = """{
+    "name" : "Scott",
+    "isMale" : true,
+    "bday" : {"year":2001, "month":12, "day":25 },
+    "favouriteColors" : ["blue", "green"],
+    "emptyArray" : [],
+    "emptyObject" : {}
+}"""
+run jValue example1
+|> parserEqual (
+    Success (
+        JObject (
+            Map.ofList [
+                "name", JString "Scott"
+                "isMale", JBool true
+                "bday", JObject (
+                    Map.ofList [
+                        "year", JNumber 2001.0
+                        "month", JNumber 12.0
+                        "day", JNumber 25.0
+                    ]
+                )
+                "favouriteColors", JArray [ JString "blue"; JString "green" ]
+                "emptyArray", JArray []
+                "emptyObject", JObject Map.empty
+            ]
+        )
+    )
+)
+
+#!fsharp
+
+//// test
+
+let example2 = """{"widget": {
+    "debug": "on",
+    "window": {
+        "title": "Sample Konfabulator Widget",
+        "name": "main_window",
+        "width": 500,
+        "height": 500
+    },
+    "image": {
+        "src": "Images/Sun.png",
+        "name": "sun1",
+        "hOffset": 250,
+        "vOffset": 250,
+        "alignment": "center"
+    },
+    "text": {
+        "data": "Click Here",
+        "size": 36,
+        "style": "bold",
+        "name": "text1",
+        "hOffset": 250,
+        "vOffset": 100,
+        "alignment": "center",
+        "onMouseUp": "sun1.opacity = (sun1.opacity / 100) * 90;"
+    }
+}}"""
+
+run jValue example2
+|> parserEqual (
+    Success (
+        JObject (
+            Map.ofList [
+                "widget", JObject (
+                    Map.ofList [
+                        "debug", JString "on"
+                        "window", JObject (
+                            Map.ofList [
+                                "title", JString "Sample Konfabulator Widget"
+                                "name", JString "main_window"
+                                "width", JNumber 500.0
+                                "height", JNumber 500.0
+                            ]
+                        )
+                        "image", JObject (
+                            Map.ofList [
+                                "src", JString "Images/Sun.png"
+                                "name", JString "sun1"
+                                "hOffset", JNumber 250.0
+                                "vOffset", JNumber 250.0
+                                "alignment", JString "center"
+                            ]
+                        )
+                        "text", JObject (
+                            Map.ofList [
+                                "data", JString "Click Here"
+                                "size", JNumber 36.0
+                                "style", JString "bold"
+                                "name", JString "text1"
+                                "hOffset", JNumber 250.0
+                                "vOffset", JNumber 100.0
+                                "alignment", JString "center"
+                                "onMouseUp", JString "sun1.opacity = (sun1.opacity / 100) * 90;"
+                            ]
+                        )
+                    ]
+                )
+            ]
+        )
+    )
+)
+
+#!fsharp
+
+//// test
+
+let example3 = """{
+  "string": "Hello, \"World\"!",
+  "escapedString": "This string contains \\/\\\\\\b\\f\\n\\r\\t\\\"\\'",
+  "number": 42,
+  "scientificNumber": 3.14e-10,
+  "boolean": true,
+  "nullValue": null,
+  "array": [1, 2, 3, 4, 5],
+  "unicodeString1": "프리마",
+  "unicodeString2": "\u0048\u0065\u006C\u006C\u006F, \u0022\u0057\u006F\u0072\u006C\u0064\u0022!",
+  "specialCharacters": "!@#$%^&*()",
+  "emptyArray": [],
+  "emptyObject": {},
+  "nestedArrays": [[1, 2, 3], [4, 5, 6]],
+  "object": {
+    "nestedString": "Nested Value",
+    "nestedNumber": 3.14,
+    "nestedBoolean": false,
+    "nestedNull": null,
+    "nestedArray": ["a", "b", "c"],
+    "nestedObject": {
+      "nestedProperty": "Nested Object Value"
+    }
+  },
+  "nestedObjects": [
+    {"name": "Alice", "age": 25},
+    {"name": "Bob", "age": 30}
+  ]
+}"""
+run jValue example3
+|> parserEqual (
+    Success (
+        JObject (
+            Map.ofList [
+                "string", JString @"Hello, ""World""!"
+                "escapedString", JString @"This string contains \/\\\b\f\n\r\t\""\'"
+                "number", JNumber 42.0
+                "scientificNumber", JNumber 3.14e-10
+                "boolean", JBool true
+                "nullValue", JNull
+                "array", JArray [
+                    JNumber 1.0; JNumber 2.0; JNumber 3.0; JNumber 4.0; JNumber 5.0
+                ]
+                "unicodeString1", JString "프리마"
+                "unicodeString2", JString @"Hello, ""World""!"
+                "specialCharacters", JString "!@#$%^&*()"
+                "emptyArray", JArray []
+                "emptyObject", JObject Map.empty
+                "nestedArrays", JArray [
+                    JArray [ JNumber 1.0; JNumber 2.0; JNumber 3.0 ]
+                    JArray [ JNumber 4.0; JNumber 5.0; JNumber 6.0 ]
+                ]
+                "object", JObject (
+                    Map.ofList [
+                        "nestedString", JString "Nested Value"
+                        "nestedNumber", JNumber 3.14
+                        "nestedBoolean", JBool false
+                        "nestedNull", JNull
+                        "nestedArray", JArray [JString "a"; JString "b"; JString "c"]
+                        "nestedObject", JObject (
+                            Map.ofList [
+                                "nestedProperty", JString "Nested Object Value"
+                            ]
+                        )
+                    ]
+                )
+                "nestedObjects", JArray [
+                  JObject (Map.ofList [ "name", JString "Alice"; "age", JNumber 25.0 ])
+                  JObject (Map.ofList [ "name", JString "Bob"; "age", JNumber 30.0 ])
+                ]
+            ]
+        )
+    )
+)

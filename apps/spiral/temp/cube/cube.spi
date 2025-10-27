@@ -1,0 +1,287 @@
+/// # cube
+
+/// ## cube
+
+/// ### get_width
+inl get_width () =
+    160i32
+
+/// ### get_height
+inl get_height () =
+    44i32
+
+/// ### get_background_char
+inl get_background_char () =
+    '.'
+
+/// ### get_distance_from_cam
+inl get_distance_from_cam () =
+    100f64
+
+/// ### get_k1
+inl get_k1 () =
+    40f64
+
+/// ### get_increment_speed
+inl get_increment_speed () =
+    0.6f64
+
+/// ### rotation
+type rotation =
+    {
+        a : f64
+        b : f64
+        c : f64
+    }
+
+/// ### cube
+type cube =
+    {
+        cube_width : f64
+        horizontal_offset : f64
+    }
+
+/// ### get_cubes
+inl get_cubes () : list cube =
+    [
+        { cube_width = 20; horizontal_offset = -40 }
+        { cube_width = 10; horizontal_offset = 10 }
+        { cube_width = 5; horizontal_offset = 40 }
+    ]
+
+/// ### calculate_x
+inl calculate_x i j k (rot : rotation) =
+    inl a, b, c = rot.a, rot.b, rot.c
+    j * sin a * sin b * cos c - k * cos a * sin b * cos c +
+    j * cos a * sin c + k * sin a * sin c + i * cos b * cos c
+
+/// ### calculate_y
+inl calculate_y i j k (rot : rotation) =
+    inl a, b, c = rot.a, rot.b, rot.c
+    j * cos a * cos c + k * sin a * cos c -
+    j * sin a * sin b * sin c + k * cos a * sin b * sin c -
+    i * cos b * sin c
+
+/// ### calculate_z
+inl calculate_z i j k (rot : rotation) =
+    inl a, b, c = rot.a, rot.b, rot.c
+    k * cos a * cos b - j * sin a * cos b + i * sin b
+
+/// ### calculate_for_surface
+let calculate_for_surface cube_x cube_y cube_z ch rot horizontal_offset =
+    inl x = calculate_x cube_x cube_y cube_z rot
+    inl y = calculate_y cube_x cube_y cube_z rot
+    inl z = calculate_z cube_x cube_y cube_z rot + get_distance_from_cam ()
+    inl ooz = 1.0 / z
+    inl xp = i32 (f64 (get_width ()) / 2.0 + horizontal_offset + get_k1 () * ooz * x * 2.0)
+    inl yp = i32 (f64 (get_height ()) / 2.0 + get_k1 () * ooz * y)
+    inl idx = xp + yp * get_width ()
+    if idx >= 0 && idx < get_width () * get_height ()
+    then Some (idx, (ooz, ch))
+    else None
+
+/// ### frange
+inl frange start stop step : _ f64 =
+    fun () =>
+        inl current = mut start
+        loopw.while
+            fun () => (step > 0f64 && *current < stop) || (step < 0 && *current > stop)
+            fun () =>
+                *current |> yield
+                current <- *current + step
+    |> seq.new_seq
+
+/// ### get_cube_points
+inl get_cube_points (cube : cube) rot =
+    inl cw = cube.cube_width
+    inl ho = cube.horizontal_offset
+    inl cube_range = frange -cw cw (get_increment_speed ())
+    inl cube_range = join cube_range
+    inl get cube_x cube_y =
+        [
+            calculate_for_surface cube_x cube_y -cw ';' rot ho
+            calculate_for_surface cw cube_y cube_x '\\' rot ho
+            calculate_for_surface -cw cube_y -cube_x '/' rot ho
+            calculate_for_surface -cube_x cube_y cw '=' rot ho
+            calculate_for_surface cube_x -cw -cube_y '>' rot ho
+            calculate_for_surface cube_x cw cube_y '<' rot ho
+        ]
+        |> listm'.box
+    inl get = join get
+    inl box x : _ (i32 * f64 * char) =
+        optionm'.box x
+    inl box = join box
+    fun () =>
+        backend_switch {
+            Fsharp = fun () =>
+                $'for cube_x in !cube_range do'
+                $'for cube_y in !cube_range do'
+                $'let x = !get cube_x cube_y |> Seq.choose !box '
+                $'yield\! x' : ()
+            Python = fun () =>
+                $'cube_range = !cube_range '
+                $'get = !get '
+                $'box = !box '
+                $'for cube_x in cube_range:'
+                $'    for cube_y in cube_range:'
+                $'        x = get(cube_x)(cube_y)'
+                $'        for i in x:'
+                $'            i_ = box(i)'
+                $'            if i_ is not None: yield i' : ()
+        }
+    |> seq.new_seq
+
+/// ### generate_frame
+inl generate_frame rot =
+    inl updates : seq.seq' (int * (f64 * char)) =
+        inl get_cube_points' cube : seq.seq' (int * (f64 * char)) =
+            get_cube_points cube rot
+        inl cubes = get_cubes () |> listm'.box
+        backend_switch {
+            Fsharp = fun () =>
+                inl get_cube_points' = join get_cube_points'
+                (cubes |> $'Seq.collect !get_cube_points' ') : seq.seq' (int * (f64 * char))
+            Python = fun () =>
+                $'cubes = !cubes '
+                $'get_cube_points = !get_cube_points' '
+                $'[x for cube in cubes for x in get_cube_points(*cube)]' : seq.seq' (int * (f64 * char))
+        }
+    inl none : _ (f64 * char) = None
+    inl width = get_width ()
+    inl height = get_height ()
+    inl buffer =
+        backend_switch {
+            Fsharp = fun () =>
+                $'Array.create (!width * !height) !none ' : a int (option (f64 * char))
+            Python = fun () =>
+                $'[!none for _ in range(!width * !height)]' : a int (option (f64 * char))
+        }
+
+    inl fn idx ((ooz : f64), (ch : char)) =
+        match buffer |> am'.index idx with
+        | Some (prev_ooz, _) when prev_ooz >= ooz => ()
+        | _ =>
+            inl x = (ooz, ch) |> Some
+            backend_switch {
+                Fsharp = fun () =>
+                    $'!buffer.[!idx] <- !x ' : ()
+                Python = fun () =>
+                    $'!buffer[!idx] = !x ' : ()
+            }
+    backend_switch {
+        Fsharp = fun () =>
+            updates
+            |> $'Seq.iter (fun (struct (idx, ooz, ch)) -> !fn idx (ooz, ch))' : ()
+        Python = fun () =>
+            $'for (idx, ooz, ch) in !updates: !fn(idx)(ooz, ch)' : ()
+    }
+
+    inl sb = "" |> sm'.string_builder
+    inl fn1 row =
+        inl fn2 col =
+            inl idx = col + row * width
+            inl ch =
+                match buffer |> am'.index idx with
+                | Some (_, ch) => ch
+                | None => get_background_char ()
+            sb |> sm'.builder_append (ch |> sm'.obj_to_string) |> ignore
+
+        backend_switch {
+            Fsharp = fun () =>
+                $'for col in 0 .. (!width - 1) do !fn2 col' : ()
+            Python = fun () =>
+                $'for col in range(!width): !fn2(col)' : ()
+        }
+        sb |> sm'.builder_append_line |> ignore
+
+    backend_switch {
+        Fsharp = fun () =>
+            $'for row in 0 .. (!height - 1) do !fn1 row' : ()
+        Python = fun () =>
+            $'for row in range(!height): !fn1(row)' : ()
+    }
+    sb |> sm'.obj_to_string
+
+/// ### main_루프
+let rec main_루프 max i rot =
+    fun () =>
+        inl rot = join rot
+        inl frame = rot |> generate_frame
+        if max < 0 then
+            run_target function
+                | Fsharp (Native) => fun () => $'System.Console.SetCursorPosition (0, 0)'
+                | Rust _ => fun () =>
+                    open rust.rust_operators
+                    !\($'$"print\!(\\\"\\\\x1B[1;1H\\\")"')
+                | TypeScript _ => fun () =>
+                    open typescript_operators
+                    !\($'$"process.stdout.write(\'\\\\u001B[1;1H\')"')
+                | Python _ => fun () =>
+                    open python_operators
+                    // global "import sys"
+                    !\($'$"sys.stdout.write(\\\"\\\\033[1;1H\\\")"')
+                | Cuda _ => fun () =>
+                    global "import sys"
+                    $'sys.stdout.write("\\033[1;1H")'
+                | _ => fun () => ()
+        frame |> console.write_line
+        async.sleep 1 |> async.do
+        if max > 0 && i >= max
+        then ()
+        else
+            { a = rot.a + 0.05; b = rot.b + 0.05; c = rot.c + 0.01 }
+            |> main_루프 max (i + 1)
+            |> async.return_await'
+    |> async.new_async_unit
+
+/// ### main
+inl main (_args : array_base string) =
+    inl console =
+        run_target function
+        | Fsharp (Wasm) => fun () => false
+        | _ => fun () =>
+            ((join "VSCODE_PID") |> env.get_environment_variable |> sm'.length |> (=) 0i32)
+                && ("AUTOMATION" |> env.get_environment_variable |> sm'.length |> (=) 0i32)
+    if console then
+        run_target function
+            | Fsharp (Native) => fun () => $'System.Console.CursorVisible <- false'
+            | Rust _ => fun () =>
+                open rust.rust_operators
+                !\($'$"print\!(\\\"\\\\x1B[?25l\\\")"')
+            | TypeScript _ => fun () =>
+                open typescript_operators
+                !\($'$"process.stdout.write(\'\\\\u001B[?25l\')"')
+            | Python _ => fun () =>
+                open python_operators
+                python.import_all "sys"
+                !\($'$"sys.stdout.write(\\\"\\\\033[?25l\\\")"')
+            | _ => fun () => ()
+    main_루프 (if console then -1i32 else 50) 1i32 { a = 0.0; b = 0.0; c = 0.0 }
+    |> fun x =>
+        run_target_args' x function
+        | Fsharp (Wasm)
+        | TypeScript _ => fun x =>
+            x
+            |> async.start_child
+            |> ignore
+        | Python _ => fun x =>
+            x
+            |> async.start_immediate
+            threading.sleep 2000
+        | _ => fun x =>
+            x
+            |> async.run_synchronously
+
+inl main () =
+    backend_switch {
+        Fsharp = fun () =>
+            $'let main_ = !main '
+            $'\#if \!FABLE_COMPILER_RUST'
+            $'main_ [||]' : ()
+            $'\#else'
+            $'let main args = main_ [||]; 0' : ()
+            $'\#endif' : ()
+        Python = fun () =>
+            main ;[]
+    }
+    : ()

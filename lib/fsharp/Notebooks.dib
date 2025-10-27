@@ -1,0 +1,34 @@
+#!meta
+
+{"kernelInfo":{"defaultKernelName":"spiral","items":[{"aliases":[],"name":"spiral"}]}}
+
+#!fsharp
+
+//// test
+
+Formatter.ListExpansionLimit <- 100
+
+#!fsharp
+
+#!import ../../../polyglot/deps/spiral/lib/spiral/common.fsx
+let trace_state_Common = TraceState.trace_state
+type Common_US0 = US0
+#!import ../../../polyglot/deps/spiral/lib/spiral/sm.fsx
+#!import ../../../polyglot/deps/spiral/lib/spiral/crypto.fsx
+#!import ../../../polyglot/deps/spiral/lib/spiral/date_time.fsx
+#!import ../../../polyglot/deps/spiral/lib/spiral/async_.fsx
+#!import ../../../polyglot/deps/spiral/lib/spiral/threading.fsx
+#!import ../../../polyglot/deps/spiral/lib/spiral/networking.fsx
+let trace_state_Networking = TraceState.trace_state
+type Networking_US0 = US0
+#!import ../../../polyglot/deps/spiral/lib/spiral/platform.fsx
+#!import ../../../polyglot/deps/spiral/lib/spiral/runtime.fsx
+let trace_state_Runtime = TraceState.trace_state
+type Runtime_US0 = US0
+#!import ../../../polyglot/deps/spiral/lib/spiral/file_system.fsx
+let trace_state_File_system = TraceState.trace_state
+type File_system_US0 = US0
+#!import ../../../polyglot/deps/spiral/lib/spiral/trace.fsx
+let trace_state_Trace = TraceState.trace_state
+type Trace_US0 = US0
+#!import ../../../polyglot/deps/spiral/lib/spiral/lib.fsx

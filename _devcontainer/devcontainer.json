@@ -1,0 +1,46 @@
+{
+  "appPort": [],
+  "portsAttributes": {
+    "13805": {
+      "label": "spiral 1"
+    },
+    "13806": {
+      "label": "spiral 2"
+    }
+  },
+  "build": {
+    "context": "..",
+    "dockerfile": "Dockerfile"
+  },
+  "features": {
+    "ghcr.io/duduribeiro/devcontainer-features/neovim:1": {
+      "version": "nightly"
+    }
+  },
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "16gb",
+    "storage": "64gb"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "i574n.spiral-lang-vscode-i574n",
+        "i574n.dotnet-interactive-vscode-i574n",
+        "asvetliakov.vscode-neovim"
+      ],
+      "settings": {
+        "notebook.lineNumbers": "on",
+        "spiral.port": 13805
+      }
+    }
+  },
+  "runArgs": [
+    "--cap-add=SYS_PTRACE",
+    "--security-opt",
+    "seccomp=unconfined",
+    "--env-file",
+    "${localWorkspaceFolder}/.devcontainer/.env"
+  ],
+  "postCreateCommand": "pwd && rustc --version && echo postCreateCommand"
+}

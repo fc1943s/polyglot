@@ -1,0 +1,2133 @@
+#!meta
+
+{"kernelInfo":{"defaultKernelName":"spiral","items":[{"name":"spiral"}]}}
+
+#!fsharp
+
+#nowarn 0686
+
+#!markdown
+
+# Supervisor (Polyglot)
+
+#!fsharp
+
+#r @"../../../../../../../.nuget/packages/fsharp.control.asyncseq/3.2.1/lib/netstandard2.1/FSharp.Control.AsyncSeq.dll"
+#r @"../../../../../../../.nuget/packages/system.reactive/6.0.1-preview.1/lib/net6.0/System.Reactive.dll"
+#r @"../../../../../../../.nuget/packages/system.reactive.linq/6.0.1-preview.1/lib/netstandard2.0/System.Reactive.Linq.dll"
+#r @"../../../../../../../.nuget/packages/argu/6.2.4/lib/netstandard2.0/Argu.dll"
+#r @"../../../../../../../.nuget/packages/microsoft.aspnetcore.http.connections.common/7.0.0/lib/net7.0/Microsoft.AspNetCore.Http.Connections.Common.dll"
+#r @"../../../../../../../.nuget/packages/microsoft.aspnetcore.http.connections.client/7.0.0/lib/net7.0/Microsoft.AspNetCore.Http.Connections.Client.dll"
+#r @"../../../../../../../.nuget/packages/microsoft.aspnetcore.signalr.common/7.0.0/lib/net7.0/Microsoft.AspNetCore.SignalR.Common.dll"
+#r @"../../../../../../../.nuget/packages/microsoft.aspnetcore.signalr.client/7.0.0/lib/net7.0/Microsoft.AspNetCore.SignalR.Client.dll"
+#r @"../../../../../../../.nuget/packages/microsoft.aspnetcore.signalr.client.core/7.0.0/lib/net7.0/Microsoft.AspNetCore.SignalR.Client.Core.dll"
+#r @"../../../../../../../.nuget/packages/fsharp.json/0.4.1/lib/netstandard2.0/FSharp.Json.dll"
+
+#!fsharp
+
+#!import ../../lib/fsharp/Notebooks.dib
+#!import ../../lib/fsharp/Testing.dib
+
+#!fsharp
+
+#!import ../../lib/fsharp/Common.fs
+#!import ../../lib/fsharp/CommonFSharp.fs
+#!import ../../lib/fsharp/Async.fs
+#!import ../../lib/fsharp/AsyncSeq.fs
+#!import ../../lib/fsharp/Runtime.fs
+#!import ../../lib/fsharp/FileSystem.fs
+
+#!fsharp
+
+#if !INTERACTIVE
+open Lib
+#endif
+
+#!fsharp
+
+open Common
+open SpiralFileSystem.Operators
+open Microsoft.AspNetCore.SignalR.Client
+
+#!markdown
+
+### sendJson
+
+#!fsharp
+
+let sendJson (port : int) (json : string) = async {
+    let host = "127.0.0.1"
+    let! portOpen = SpiralNetworking.test_port_open host port
+    if portOpen then
+        try
+            let connection = HubConnectionBuilder().WithUrl($"http://{host}:{port}").Build()
+            do! connection.StartAsync () |> Async.AwaitTask
+            let! result = connection.InvokeAsync<string> ("ClientToServerMsg", json) |> Async.AwaitTask
+            do! connection.StopAsync () |> Async.AwaitTask
+            trace Verbose (fun () -> $"Supervisor.sendJson / port: {port} / json: {json |> SpiralSm.ellipsis_end 200} / result: {result |> Option.ofObj |> Option.map (SpiralSm.ellipsis_end 200)}") _locals
+            return Some result
+        with ex ->
+            trace Critical (fun () -> $"Supervisor.sendJson / port: {port} / json: {json |> SpiralSm.ellipsis_end 200} / ex: {ex |> SpiralSm.format_exception}") _locals
+            return None
+    else
+        trace Debug (fun () -> $"Supervisor.sendJson / port: {port} / error: port not open") _locals
+        return None
+}
+
+#!markdown
+
+### sendObj
+
+#!fsharp
+
+let sendObj port obj =
+    obj
+    |> System.Text.Json.JsonSerializer.Serialize
+    |> sendJson port
+
+#!markdown
+
+### workspaceRoot
+
+#!fsharp
+
+let workspaceRoot = SpiralFileSystem.get_workspace_root ()
+
+#!markdown
+
+### getFilePathFromUri
+
+#!fsharp
+
+let getFilePathFromUri uri =
+    match System.Uri.TryCreate (uri, System.UriKind.Absolute) with
+    | true, uri -> uri.AbsolutePath |> System.IO.Path.GetFullPath
+    | _ -> failwith "invalid uri"
+
+#!markdown
+
+### getCompilerPort
+
+#!fsharp
+
+let getCompilerPort () =
+    13805
+
+#!markdown
+
+### serialize_obj
+
+#!fsharp
+
+    let serializeObj obj =
+        try
+            obj
+            |> FSharp.Json.Json.serialize
+            |> SpiralSm.replace "\\\\" "\\"
+            |> SpiralSm.replace "\\r\\n" "\n"
+            |> SpiralSm.replace "\\n" "\n"
+        with ex ->
+            trace Critical (fun () -> "Supervisor.serialize_obj / obj: %A{obj}") _locals
+            ""
+
+#!markdown
+
+### Backend
+
+#!fsharp
+
+type Backend =
+    | Gleam
+    | Fsharp
+    | Python
+    | Cpp
+
+#!fsharp
+
+#r @"../../../../../../../.nuget/packages/fsharpx.collections/3.1.0/lib/netstandard2.0/FSharpx.Collections.dll"
+#r @"../../../../../../../.nuget/packages/hopac/0.5.1/lib/netstandard2.0/Hopac.dll"
+#r @"../../../../../../../.nuget/packages/hopac/0.5.1/lib/netstandard2.0/Hopac.Core.dll"
+#r @"../../../../../../../.nuget/packages/fparsec/2.0.0-beta2/lib/netstandard2.1/FParsec.dll"
+#r @"../../../../../../../.nuget/packages/fparsec/2.0.0-beta2/lib/netstandard2.1/FParsecCS.dll"
+
+
+
+#if _LINUX
+#r @"../../../../../../../.nuget/packages/microsoft.aspnetcore.app.runtime.linux-x64/9.0.3/runtimes/linux-x64/lib/net9.0/Microsoft.AspNetCore.dll"
+#else
+#r @"../../../../../../../.nuget/packages/microsoft.aspnetcore.app.runtime.win-x64/9.0.3/runtimes/win-x64/lib/net9.0/Microsoft.AspNetCore.dll"
+#endif
+
+#if _LINUX
+#r @"../../../../../../../.nuget/packages/microsoft.aspnetcore.app.runtime.linux-x64/9.0.3/runtimes/linux-x64/lib/net9.0/Microsoft.AspNetCore.SignalR.dll"
+#else
+#r @"../../../../../../../.nuget/packages/microsoft.aspnetcore.app.runtime.win-x64/9.0.3/runtimes/win-x64/lib/net9.0/Microsoft.AspNetCore.SignalR.dll"
+#endif
+
+#if _LINUX
+#r @"../../../../../../../.nuget/packages/microsoft.aspnetcore.app.runtime.linux-x64/9.0.3/runtimes/linux-x64/lib/net9.0/Microsoft.AspNetCore.SignalR.Core.dll"
+#else
+#r @"../../../../../../../.nuget/packages/microsoft.aspnetcore.app.runtime.win-x64/9.0.3/runtimes/win-x64/lib/net9.0/Microsoft.AspNetCore.SignalR.Core.dll"
+#endif
+
+#if _LINUX
+#r @"../../../../../../../.nuget/packages/microsoft.aspnetcore.app.runtime.linux-x64/9.0.3/runtimes/linux-x64/lib/net9.0/Microsoft.AspNetCore.Cors.dll"
+#else
+#r @"../../../../../../../.nuget/packages/microsoft.aspnetcore.app.runtime.win-x64/9.0.3/runtimes/win-x64/lib/net9.0/Microsoft.AspNetCore.Cors.dll"
+#endif
+
+#if _LINUX
+#r @"../../../../../../../.nuget/packages/microsoft.aspnetcore.app.runtime.linux-x64/9.0.3/runtimes/linux-x64/lib/net9.0/Microsoft.AspNetCore.Http.Abstractions.dll"
+#else
+#r @"../../../../../../../.nuget/packages/microsoft.aspnetcore.app.runtime.win-x64/9.0.3/runtimes/win-x64/lib/net9.0/Microsoft.AspNetCore.Http.Abstractions.dll"
+#endif
+
+#if _LINUX
+#r @"../../../../../../../.nuget/packages/microsoft.aspnetcore.app.runtime.linux-x64/9.0.3/runtimes/linux-x64/lib/net9.0/Microsoft.AspNetCore.Connections.Abstractions.dll"
+#else
+#r @"../../../../../../../.nuget/packages/microsoft.aspnetcore.app.runtime.win-x64/9.0.3/runtimes/win-x64/lib/net9.0/Microsoft.AspNetCore.Connections.Abstractions.dll"
+#endif
+
+#if _LINUX
+#r @"../../../../../../../.nuget/packages/microsoft.aspnetcore.app.runtime.linux-x64/9.0.3/runtimes/linux-x64/lib/net9.0/Microsoft.AspNetCore.Hosting.Abstractions.dll"
+#else
+#r @"../../../../../../../.nuget/packages/microsoft.aspnetcore.app.runtime.win-x64/9.0.3/runtimes/win-x64/lib/net9.0/Microsoft.AspNetCore.Hosting.Abstractions.dll"
+#endif
+
+#if _LINUX
+#r @"../../../../../../../.nuget/packages/microsoft.aspnetcore.app.runtime.linux-x64/9.0.3/runtimes/linux-x64/lib/net9.0/Microsoft.AspNetCore.Http.Connections.dll"
+#else
+#r @"../../../../../../../.nuget/packages/microsoft.aspnetcore.app.runtime.win-x64/9.0.3/runtimes/win-x64/lib/net9.0/Microsoft.AspNetCore.Http.Connections.dll"
+#endif
+
+#if _LINUX
+#r @"../../../../../../../.nuget/packages/microsoft.aspnetcore.app.runtime.linux-x64/9.0.3/runtimes/linux-x64/lib/net9.0/Microsoft.AspNetCore.Routing.dll"
+#else
+#r @"../../../../../../../.nuget/packages/microsoft.aspnetcore.app.runtime.win-x64/9.0.3/runtimes/win-x64/lib/net9.0/Microsoft.AspNetCore.Routing.dll"
+#endif
+
+#!pwsh
+
+ls ~/.nuget/packages/microsoft.extensions.logging
+echo "`n"
+ls ~/.nuget/packages/microsoft.extensions.logging.abstractions
+
+#!fsharp
+
+#r @"../../../../../../../.nuget/packages/microsoft.extensions.logging/9.0.5/lib/net9.0/Microsoft.Extensions.Logging.dll"
+#r @"../../../../../../../.nuget/packages/microsoft.extensions.logging.abstractions/9.0.10/lib/net9.0/Microsoft.Extensions.Logging.Abstractions.dll"
+#r @"../../../../../../../.nuget/packages/microsoft.extensions.dependencyinjection.abstractions/9.0.5/lib/net9.0/Microsoft.Extensions.DependencyInjection.Abstractions.dll"
+
+#!pwsh
+
+ls ~/.nuget/packages/system.management
+
+#!fsharp
+
+#r @"../../../../../../../.nuget/packages/system.management/9.0.4/lib/netstandard2.0/System.Management.dll"
+
+#!fsharp
+
+#!import ../../deps/spiral/apps/compiler/spiral_compiler.fs
+
+#!fsharp
+
+open spiral_compiler
+
+#!markdown
+
+### awaitCompiler
+
+#!fsharp
+
+let awaitCompiler port cancellationToken = async {
+    let host = "127.0.0.1"
+    let struct (ct, disposable) = cancellationToken |> SpiralThreading.new_disposable_token
+    let! ct = ct |> SpiralAsync.merge_cancellation_token_with_default_async
+
+    let compiler = MailboxProcessor.Start (fun inbox -> async {
+        let! availablePort = SpiralNetworking.get_available_port (Some 180) host port
+        if availablePort <> port then
+            inbox.Post (port, false)
+        else
+            let compilerDir =
+                workspaceRoot </> "deps/spiral/apps/compiler/dist"
+                |> System.IO.Path.GetFullPath
+
+            let compilerPath = compilerDir </> $"spiral_compiler{SpiralPlatform.get_executable_suffix ()}"
+
+            let! exitCode, result =
+                SpiralRuntime.execution_options (fun x ->
+                    { x with
+                        l0 = $"\"{compilerPath}\" --port {availablePort} --default-int i32 --default-float f64"
+                        l1 = Some ct
+                        l3 = Some (fun struct (_, line, _) -> async {
+                            if line |> SpiralSm.contains $"System.IO.IOException: Failed to bind to address http://{host}:{port}: address already in use." then
+                                inbox.Post (port, false)
+
+                            if line |> SpiralSm.contains $"Server bound to: http://localhost:{availablePort}" then
+                                let rec 루프 retry = async {
+                                    do!
+                                        SpiralNetworking.wait_for_port_access (Some 100) true host availablePort
+                                        |> Async.runWithTimeoutAsync 500
+                                        |> Async.Ignore
+
+                                    let _locals () = $"port: {availablePort} / retry: {retry} / {_locals ()}"
+                                    try
+                                        let pingObj = {| Ping = true |}
+                                        let! pingResult = pingObj |> sendObj availablePort
+                                        trace Verbose (fun () -> $"Supervisor.awaitCompiler / Ping / result: '%A{pingResult}'") _locals
+
+                                        match pingResult with
+                                        | Some _ -> inbox.Post (availablePort, true)
+                                        | None -> do! 루프 (retry + 1)
+                                    with ex ->
+                                        trace Verbose (fun () -> $"Supervisor.awaitCompiler / Ping / ex: {ex |> SpiralSm.format_exception}") _locals
+                                        do! 루프 (retry + 1)
+                                }
+                                do! 루프 1
+                        })
+                        l6 = Some workspaceRoot
+                    }
+                )
+                |> SpiralRuntime.execute_with_options_async
+
+            trace Debug (fun () -> $"Supervisor.awaitCompiler / exitCode: {exitCode} / result: {result}") _locals
+            disposable.Dispose ()
+    }, ct)
+
+    let! serverPort, managed = compiler.Receive ()
+
+    let connection = HubConnectionBuilder().WithUrl($"http://{host}:{serverPort}").Build ()
+    do! connection.StartAsync () |> Async.AwaitTask
+
+    let event = Event<_> ()
+    let disposable' = connection.On<string> ("ServerToClientMsg", event.Trigger)
+    let stream =
+        FSharp.Control.AsyncSeq.unfoldAsync
+            (fun () -> async {
+                let! msg = event.Publish |> Async.AwaitEvent
+                return Some (msg |> FSharp.Json.Json.deserialize<ClientErrorsRes>, ())
+            })
+            ()
+
+    let disposable' =
+        new_disposable (fun () ->
+            async {
+                disposable'.Dispose ()
+                do! connection.StopAsync () |> Async.AwaitTask
+                disposable.Dispose ()
+                if managed
+                then do!
+                    SpiralNetworking.wait_for_port_access (Some 100) false host serverPort
+                    |> Async.runWithTimeoutAsync 1500
+                    |> Async.Ignore
+            }
+            |> Async.RunSynchronously
+        )
+
+    return
+        serverPort,
+        stream,
+        ct,
+        disposable'
+}
+
+#!fsharp
+
+open Hopac
+open Hopac.Infixes
+
+#!markdown
+
+### server
+
+#!fsharp
+
+let server1 = new_server<Job<unit>, obj, string option, Job<unit>, unit> ()
+let server2 = new_server<Job<unit>, obj, int array, Job<unit>, unit> ()
+
+#!markdown
+
+### buildFile
+
+#!fsharp
+
+let buildFile backend timeout port cancellationToken path =
+    let rec 루프 retry = async {
+        let fullPath = path |> System.IO.Path.GetFullPath |> SpiralFileSystem.normalize_path
+        let fileDir = fullPath |> System.IO.Path.GetDirectoryName
+        let fileName = fullPath |> System.IO.Path.GetFileNameWithoutExtension
+        let! code = fullPath |> SpiralFileSystem.read_all_text_async
+
+        // let stream, disposable = fileDir |> FileSystem.watchDirectory (fun _ -> true)
+        // use _ = disposable
+
+        let struct (token, disposable) = SpiralThreading.new_disposable_token cancellationToken
+        use _ = disposable
+
+        let outputFileName =
+            match backend with
+            | Gleam -> $"{fileName}.gleam"
+            | Fsharp -> $"{fileName}.fsx"
+            | Python -> $"{fileName}.py"
+            | Cpp -> $"{fileName}.cpp"
+
+        // let outputContentSeq =
+        //     stream
+        //     |> FSharp.Control.AsyncSeq.chooseAsync (function
+        //         | _, (FileSystem.FileSystemChange.Changed (path, Some text))
+        //             when (path |> System.IO.Path.GetFileName) = outputFileName
+        //             ->
+        //                 // fileDir </> path |> SpiralFileSystem.read_all_text_retry_async
+        //                 text |> Some |> Async.init
+        //         | _ -> None |> Async.init
+        //     )
+        //     |> FSharp.Control.AsyncSeq.map (fun content ->
+        //         Some (content |> SpiralSm.replace "\r\n" "\n"), None
+        //     )
+
+        let printErrorData (data : {| uri : string; errors : RString list |}) =
+            let fileName = data.uri |> System.IO.Path.GetFileName
+            let errors =
+                data.errors
+                |> List.map snd
+                |> SpiralSm.concat "\n"
+            $"{fileName}:\n{errors}"
+
+
+        let port = port |> Option.defaultWith getCompilerPort
+        // let! serverPort, errors, ct, disposable = awaitCompiler port (Some token)
+        let serverPort = port
+        // use _ = disposable
+
+        let errorsSeq =
+            server1.errors
+            |> FSharp.Control.AsyncSeq.choose (fun error ->
+                match error with
+                | FatalError message ->
+                    Some (message, error)
+                | TracedError data ->
+                    Some (data.message, error)
+                | PackageErrors data when data.errors |> List.isEmpty |> not ->
+                    Some (data |> printErrorData, error)
+                | TokenizerErrors data when data.errors |> List.isEmpty |> not ->
+                    Some (data |> printErrorData, error)
+                | ParserErrors data when data.errors |> List.isEmpty |> not ->
+                    Some (data |> printErrorData, error)
+                | TypeErrors data when data.errors |> List.isEmpty |> not ->
+                    Some (data |> printErrorData, error)
+                | _ -> None
+            )
+            |> FSharp.Control.AsyncSeq.map (fun (message, error) ->
+                None, Some (message, error)
+            )
+
+        let timerSeq =
+            500
+            |> FSharp.Control.AsyncSeq.intervalMs
+            |> FSharp.Control.AsyncSeq.map (fun _ -> None, None)
+
+        let compilerEvent = Event<option<string> * option<string * ClientErrorsRes>> ()
+        // let disposable' = connection.On<string> ("ServerToClientMsg", event.Trigger)
+        let outputContentSeq =
+            FSharp.Control.AsyncSeq.unfoldAsync
+                (fun () -> async {
+                    let! msg = compilerEvent.Publish |> Async.AwaitEvent
+                    trace Verbose (fun () -> $"Supervisor.buildFile / outputContentSeq unfoldAsync / msg: %A{msg}") _locals
+                    return Some (msg, ())
+                })
+                ()
+
+        let compilerEvent2 = Event<option<string> * (string * ClientErrorsRes) list * int> ()
+        // let disposable' = connection.On<string> ("ServerToClientMsg", event.Trigger)
+        let outputContentSeq2 =
+            FSharp.Control.AsyncSeq.unfoldAsync
+                (fun () -> async {
+                    let! msg = compilerEvent2.Publish |> Async.AwaitEvent
+                    trace Verbose (fun () -> $"Supervisor.buildFile / outputContentSeq2 unfoldAsync / msg: %A{msg}") _locals
+                    return Some (msg, ())
+                })
+                ()
+
+        let outputSeq =
+            [ outputContentSeq; errorsSeq; timerSeq ]
+            // [ errorsSeq; timerSeq ]
+            |> FSharp.Control.AsyncSeq.mergeAll
+
+        let! outputChild =
+            ((None, [], 0), outputSeq)
+            ||> FSharp.Control.AsyncSeq.scan (
+                fun (outputContentResult, errors, typeErrorCount) (outputContent, error) ->
+                    trace Verbose (fun () -> $"Supervisor.buildFile / AsyncSeq.scan / outputContent:\n'{outputContent |> Option.map (SpiralSm.ellipsis_end 1500)} / errors: {errors |> serializeObj} / outputContentResult: {outputContentResult} / typeErrorCount: {typeErrorCount} / retry: {retry} / error: {error} / path: {path}'") _locals
+                    match outputContent, error with
+                    | Some outputContent, None -> Some outputContent, errors, typeErrorCount
+                    | None, Some (
+                        _,
+                        FatalError "File main has a type error somewhere in its path."
+                        ) ->
+                        outputContentResult, errors, typeErrorCount + 1
+                    | None, Some error -> outputContentResult, error :: errors, typeErrorCount
+                    | None, None when typeErrorCount >= 1 ->
+                        outputContentResult, errors, typeErrorCount + 1
+                    | _ -> outputContentResult, errors, typeErrorCount
+            )
+            |> FSharp.Control.AsyncSeq.takeWhileInclusive (fun (outputContent, errors, typeErrorCount) ->
+                trace
+                    Verbose
+                    (fun () -> $"Supervisor.buildFile / takeWhileInclusive / outputContent:\n'{outputContent |> Option.map (SpiralSm.ellipsis_end 1500)}' / errors: {errors |> serializeObj} / typeErrorCount: {typeErrorCount} / retry: {retry} / path: {path}")
+                    _locals
+    #if INTERACTIVE
+                let errorWait = 1
+    #else
+                let errorWait = 1
+    #endif
+                match outputContent, errors with
+                | None, [] when typeErrorCount > errorWait -> false
+                | _, [ message, TypeErrors errors ] ->
+                    compilerEvent.Trigger (None, Some (message, TypeErrors errors))
+                    trace Verbose (fun () -> $"Supervisor.buildFile / takeWhileInclusive / TypeErrors trigger") _locals
+                    false
+                | None, [] -> true
+                | _ -> false
+            )
+            |> FSharp.Control.AsyncSeq.tryLast
+            // |> Async.withCancellationToken ct
+            |> Async.catch
+            |> Async.runWithTimeoutAsync timeout
+            |> Async.StartChild
+
+        // do! Async.Sleep 60
+
+        let fullPathUri = fullPath |> SpiralFileSystem.normalize_path |> SpiralFileSystem.new_file_uri
+
+        trace Verbose (fun () -> $"Supervisor.buildFile / fullPathUri: %A{fullPathUri}") (fun () -> "")
+
+        // let fileOpenObj = {| FileOpen = {| uri = fullPathUri; spiText = code |} |}
+
+        // let! _fileOpenResult = fileOpenObj |> sendObj serverPort
+        let fileOpenArgs = {| uri = fullPathUri; spiText = code |}
+        let! _fileOpenResult =
+            server1.job_null (server1.supervisor *<+ SupervisorReq.FileOpen fileOpenArgs)
+            |> Async.AwaitTask
+            |> Async.runWithTimeoutAsync 60000
+            |> Async.map Option.get
+        trace Verbose (fun () -> $"Supervisor.buildFile / _fileOpenResult: %A{_fileOpenResult}") (fun () -> "")
+
+        // let! _fileOpenResult = fileOpenObj |> sendObj serverPort
+
+        // do! Async.Sleep 60
+
+        let backendId =
+            match backend with
+            | Gleam -> "Gleam"
+            | Fsharp -> "Fsharp"
+            | Python -> "Python + Cuda"
+            | Cpp -> "Cpp + Cuda"
+        // let buildFileObj = {| BuildFile = {| uri = fullPathUri; backend = backendId |} |}
+
+        // let backend = Supervisor.Fsharp
+        let buildFileArgs = {| uri = fullPathUri; backend = backendId |}
+        let buildFileResultAsync =
+            server1.job_val (fun res -> server1.supervisor *<+ SupervisorReq.BuildFile(buildFileArgs,res))
+            |> Async.AwaitTask
+            |> Async.runWithTimeoutAsync timeout
+            |> Async.map Option.get
+
+        let buildFileResultAsync = async {
+            let! buildFileResult = buildFileResultAsync
+            let buildFileResult =
+                if buildFileResult = "" || buildFileResult = null
+                then None
+                else buildFileResult |> SpiralSm.replace "\r\n" "\n" |> Some
+            trace Verbose (fun () -> $"Supervisor.buildFile / buildFileResult: %A{buildFileResult}") (fun () -> "")
+            if buildFileResult.IsSome then
+                compilerEvent2.Trigger (buildFileResult, [], 0)
+            return buildFileResult, [], 0
+        }
+
+        let resultAsync =
+            outputChild
+            |> Async.map (fun x ->
+                trace Verbose (fun () -> $"Supervisor.buildFile / outputChild / x: %A{x}") _locals
+                match x with
+                | Some (Ok (Some (outputCode, errors, typeErrorCount))) ->
+                    let x =
+                        match errors with
+                        | [ message, TypeErrors errors ] ->
+                            trace Verbose (fun () -> $"Supervisor.buildFile / outputChild |> Async.map") _locals
+                            compilerEvent2.Trigger (None, [ message, TypeErrors errors ], 0)
+                            trace Verbose (fun () -> $"Supervisor.buildFile / outputChild |> Async.map") _locals
+                        | _ -> ()
+                    outputCode, errors |> List.distinct |> List.rev, typeErrorCount
+                | Some (Error ex) ->
+                    trace Critical (fun () -> $"Supervisor.buildFile / error: {ex |> SpiralSm.format_exception} / retry: {retry}") _locals
+                    None, [], 0
+                | _ -> None, [], 0
+            )
+
+        trace Verbose (fun () -> $"Supervisor.buildFile / before result: %A{()}") (fun () -> "")
+
+        // let resultSeq =
+        //     [| buildFileResultAsync; resultAsync |]
+        //     |> FSharp.Control.AsyncSeq.ofSeqAsync
+
+
+        let buildFileResultSeq = [| buildFileResultAsync |] |> FSharp.Control.AsyncSeq.ofSeqAsync
+        let resultSeq = [| resultAsync |] |> FSharp.Control.AsyncSeq.ofSeqAsync
+
+        let resultSeq =
+            [ outputContentSeq2; buildFileResultSeq; resultSeq ]
+            |> FSharp.Control.AsyncSeq.mergeAll
+
+        let! buildFileResult, result, typeErrorCount =
+            resultSeq
+            // |> FSharp.Control.AsyncSeq.collect (Array.singleton >> FSharp.Control.AsyncSeq.ofSeq)
+            |> FSharp.Control.AsyncSeq.collect (fun x ->
+                trace Verbose (fun () -> $"Supervisor.buildFile / ofSeqAsync / x: %A{x}") _locals
+                match x with
+                | Some _, _, _ as x -> [| x |]
+                | _, _ :: _, _ as x -> [| x |]
+                | _ -> [||]
+                |> FSharp.Control.AsyncSeq.ofSeq
+            )
+            |> FSharp.Control.AsyncSeq.tryFirst
+            |> Async.map Option.get
+
+        trace Verbose (fun () -> $"Supervisor.buildFile / result: %A{result} / buildFileResult: %A{buildFileResult} / typeErrorCount: {typeErrorCount}") (fun () -> "")
+
+        match buildFileResult with
+        // | None when typeErrorCount > 0 && retry = 0 ->
+        //     trace Verbose (fun () -> $"Supervisor.buildFile / result: {result} / retry: {retry} / typeErrorCount: {typeErrorCount} / fileDir: {fileDir} / targetDir: {targetDir}") _locals
+        //     return! 루프 (retry + 1)
+        | _ ->
+            let targetDir = workspaceRoot </> "target"
+            trace Verbose (fun () -> $"Supervisor.buildFile / retry: {retry} / typeErrorCount: {typeErrorCount} / fileDir: {fileDir} / targetDir: {targetDir}") _locals
+            if fileDir |> SpiralSm.starts_with targetDir then
+                let fileDirUri = fileDir |> SpiralFileSystem.normalize_path |> SpiralFileSystem.new_file_uri
+
+                // let fileDeleteObj = {| FileDelete = {| uris = [| fileDirUri |] |} |}
+                // let! _fileDeleteResult = fileDeleteObj |> sendObj serverPort
+                let fileDeleteArgs = {| uris = [| fileDirUri |] |}
+                let! _fileDeleteResult =
+                    server1.job_null (server1.supervisor *<+ SupervisorReq.FileDelete fileDeleteArgs)
+                    |> Async.AwaitTask
+                ()
+
+            let outputPath = fileDir </> outputFileName
+            return outputPath, buildFileResult, result
+    }
+    루프 0
+
+#!markdown
+
+### SpiralInput
+
+#!fsharp
+
+type SpiralInput =
+    | Spi of string * string option
+    | Spir of string
+
+#!markdown
+
+### persistCode
+
+#!fsharp
+
+let persistCode (input: {| backend : Backend option; input: SpiralInput; packages: string [] |}) = async {
+    let targetDir = workspaceRoot </> "target/spiral_Eval"
+
+    let packagesDir = targetDir </> "packages"
+
+    let hashHex = $"%A{input.backend}%A{input.input}" |> SpiralCrypto.hash_text
+
+    let packageDir = packagesDir </> hashHex
+
+    let packageDir =
+        if input.backend = Some Gleam
+        then packageDir </> "src"
+        else packageDir
+
+    packageDir |> System.IO.Directory.CreateDirectory |> ignore
+
+    let moduleName = "main"
+
+    let spirModule, spiModule =
+        match input.input with
+        | Spi (_spi, Some _spir) -> true, true
+        | Spi (_spi, None) -> false, true
+        | Spir _spir -> true, false
+        |> fun (spir, spi) ->
+            (if spir then $"{moduleName}_real*-" else ""),
+            if spi then moduleName else ""
+
+    let libLinkTargetPath = workspaceRoot </> "../spiral/lib/spiral"
+    let libLinkPath = packageDir </> "spiral"
+
+    let packagesModule =
+        input.packages
+        |> Array.map (fun package ->
+            let path = workspaceRoot </> package
+            let packageName = path |> System.IO.Path.GetFileName
+            let libLinkPath = packageDir </> packageName
+            libLinkPath |> SpiralFileSystem.link_directory path
+            $"{packageName}-"
+        )
+        |> String.concat "\n    "
+
+    let packageDir' =
+        if input.packages |> Array.isEmpty
+        then workspaceRoot </> "../spiral/lib"
+        else
+            libLinkPath |> SpiralFileSystem.link_directory libLinkTargetPath
+            packageDir
+
+    let spiprojPath = packageDir </> "package.spiproj"
+    let spiprojCode =
+        $"""packageDir: {packageDir'}
+packages:
+    |core-
+    spiral-
+    {packagesModule}
+modules:
+    {spirModule}
+    {spiModule}
+"""
+    do! spiprojCode |> SpiralFileSystem.write_all_text_exists spiprojPath
+
+    let spirPath = packageDir </> $"{moduleName}_real.spir"
+    let spiPath = packageDir </> $"{moduleName}.spi"
+
+    let spirCode, spiCode =
+        match input.input with
+        | Spi (spi, Some spir) -> Some spir, Some spi
+        | Spi (spi, None) -> None, Some spi
+        | Spir spir -> Some spir, None
+
+    match spirCode with
+    | Some spir -> do! spir |> SpiralFileSystem.write_all_text_exists spirPath
+    | None -> ()
+    match spiCode with
+    | Some spi -> do! spi |> SpiralFileSystem.write_all_text_exists spiPath
+    | None -> ()
+
+    let spiralPath =
+        match input.input with
+        | Spi _ -> spiPath
+        | Spir _ -> spirPath
+    match input.backend with
+    | None -> return spiralPath, None
+    | Some backend ->
+        let outputFileName =
+            let fileName =
+                match input.input with
+                | Spi _ -> moduleName
+                | Spir _ -> $"{moduleName}_real"
+            match backend with
+            | Gleam -> $"{fileName}.gleam"
+            | Fsharp -> $"{fileName}.fsx"
+            | Python -> $"{fileName}.py"
+            | Cpp -> $"{fileName}.cpp"
+        let outputPath = packageDir </> outputFileName
+        if outputPath |> System.IO.File.Exists |> not
+        then return spiralPath, None
+        else
+            let! oldCode = spiralPath |> SpiralFileSystem.read_all_text_async
+            if oldCode <> (spiCode |> Option.defaultValue (spirCode |> Option.defaultValue ""))
+            then return spiralPath, None
+            else
+                let! outputCode = outputPath |> SpiralFileSystem.read_all_text_async
+                return spiralPath, Some (outputPath, outputCode |> SpiralSm.replace "\r\n" "\n")
+    }
+
+#!markdown
+
+### buildCode
+
+#!fsharp
+
+let buildCode backend packages isCache timeout cancellationToken input = async {
+    let! mainPath, outputCache =
+        persistCode {| input = input; backend = Some backend; packages = packages |}
+    match outputCache with
+    | Some (outputPath, outputCode) when isCache -> return mainPath, (outputPath, Some outputCode), []
+    | _ ->
+        let! outputPath, outputCode, errors = mainPath |> buildFile backend timeout None cancellationToken
+        return mainPath, (outputPath, outputCode), errors
+}
+
+#!fsharp
+
+//// test
+
+SpiralTrace.TraceLevel.US0_0 |> set_trace_level
+"""inl app () =
+    console.write_line "text"
+    1i32
+
+inl main () =
+    app
+    |> dyn
+    |> ignore
+"""
+|> fun code -> Spi (code, None)
+|> buildCode Fsharp [||] false 20000 None
+|> Async.runWithTimeout 21000
+|> Option.map (fun (_, (_, outputContent), errors) -> outputContent, errors |> List.map fst)
+|> _assertEqual (
+    Some (
+        Some """let rec closure1 () () : unit =
+    let v0 : (string -> unit) = System.Console.WriteLine
+    let v1 : string = "text"
+    v0 v1
+and closure0 () () : int32 =
+    let v3 : unit = ()
+    let v4 : (unit -> unit) = closure1()
+    let v5 : unit = (fun () -> v4 (); v3) ()
+    1
+let v0 : (unit -> int32) = closure0()
+()
+""",
+        []
+    )
+)
+
+#!fsharp
+
+//// test
+
+"""
+inl init_series start end inc =
+    inl total : f64 = conv ((end - start) / inc) + 1
+    listm.init total (conv >> (*) inc >> (+) start) : list f64
+
+type integration = (f64 -> f64) -> f64 -> f64 -> f64
+
+inl integral dt : integration =
+    fun f a b =>
+        init_series (a + dt / 2) (b - dt / 2) dt
+        |> listm.map (f >> (*) dt)
+        |> listm.fold (+) 0
+
+inl main () =
+    integral 0.1 (fun x => x ** 2) 0 1
+"""
+|> fun code -> Spi (code, None)
+|> buildCode Fsharp [||] false 10000 None
+|> Async.runWithTimeout 11000
+|> Option.map (fun (_, (_, outputContent), errors) -> outputContent, errors |> List.map fst)
+|> _assertEqual (
+    Some (
+        Some "0.3325000000000001\n",
+        []
+    )
+)
+
+#!fsharp
+
+//// test
+
+"""
+inl init_series start end inc =
+    inl total : f64 = conv ((end - start) / inc) + 1
+    listm.init total (conv >> (*) inc >> (+) start) : list f64
+
+type integration = (f64 -> f64) -> f64 -> f64 -> f64
+
+inl integral dt : integration =
+    fun f a b =>
+        init_series (a + dt / 2) (b - dt / 2) dt
+        |> listm.map (f >> (*) dt)
+        |> listm.fold (+) 0
+
+inl main () =
+    integral 0.1 (fun x => x ** 2) 0 1
+"""
+|> fun code -> Spi (code, None)
+|> buildCode Python [||] false 10000 None
+|> Async.runWithTimeout 11000
+|> Option.map (fun (_, (_, outputContent), errors) -> outputContent, errors |> List.map fst)
+|> _assertEqual (
+    Some (
+        Some @"kernels_aux = r""""""
+// The types of these two will be replaced during compilation by the Spiral code generator. 
+// It matches on `using default_int = ` and `;` with the inner part being replaced so the form should be kept as is. 
+// The two statements need to begin at the start of a line.
+using default_int = int;
+using default_uint = unsigned int;
+
+#ifndef __NVRTC__
+// NVRTC has these includes by default so they need to be left out if it is used as the compiler.
+#include <new>
+#include <assert.h>
+#include <stdio.h>
+#endif
+
+// For error checking on the host.
+#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+template <typename T> inline __device__ void destroy(T& obj) { obj.~T(); }
+inline void gpuAssert(cudaError error, const char *file, int line, bool abort=true) {
+    if (error != cudaSuccess) {
+        fprintf(stderr, ""GPUassert: %s %s %d\n"", cudaGetErrorString(error), file, line);
+        if (abort) exit(error);
+    }
+}
+
+template <typename el>
+struct sptr // Shared pointer for the Spiral datatypes. They have to have the refc field inside them to work.
+{
+    el* base;
+
+    __device__ sptr() : base(nullptr) {}
+    __device__ sptr(el* ptr) : base(ptr) { this->base->refc++; }
+
+    __device__ ~sptr()
+    {
+        if (this->base != nullptr && --this->base->refc == 0)
+        {
+            delete this->base;
+            this->base = nullptr;
+        }
+    }
+
+    __device__ sptr(sptr& x)
+    {
+        this->base = x.base;
+        this->base->refc++;
+    }
+
+    __device__ sptr(sptr&& x)
+    {
+        this->base = x.base;
+        x.base = nullptr;
+    }
+
+    __device__ sptr& operator=(sptr& x)
+    {
+        if (this->base != x.base)
+        {
+            delete this->base;
+            this->base = x.base;
+            this->base->refc++;
+        }
+        return *this;
+    }
+
+    __device__ sptr& operator=(sptr&& x)
+    {
+        if (this->base != x.base)
+        {
+            delete this->base;
+            this->base = x.base;
+            x.base = nullptr;
+        }
+        return *this;
+    }
+};
+
+template <typename el>
+struct csptr : public sptr<el>
+{ // Shared pointer for closures specifically.
+    using sptr<el>::sptr;
+    template <typename... Args>
+    __device__ auto operator()(Args... args) -> decltype(this->base->operator()(args...))
+    {
+        return this->base->operator()(args...);
+    }
+};
+
+template <typename el, default_int max_length>
+struct static_array
+{
+    el ptr[max_length];
+    __device__ el& operator[](default_int i) {
+        assert(""The index has to be in range."" && 0 <= i && i < max_length);
+        return this->ptr[i];
+    }
+};
+
+template <typename el, default_int max_length>
+struct static_array_list
+{
+    default_int length{ 0 };
+    el ptr[max_length];
+
+    __device__ el& operator[](default_int i) {
+        assert(""The index has to be in range."" && 0 <= i && i < this->length);
+        return this->ptr[i];
+    }
+    __device__ void push(el& x) {
+        ptr[this->length++] = x;
+        assert(""The array after pushing should not be greater than max length."" && this->length <= max_length);
+    }
+    __device__ void push(el&& x) {
+        ptr[this->length++] = std::move(x);
+        assert(""The array after pushing should not be greater than max length."" && this->length <= max_length);
+    }
+    __device__ el pop() {
+        assert(""The array before popping should be greater than 0."" && 0 < this->length);
+        auto x = ptr[--this->length];
+        ptr[this->length].~el();
+        new (&ptr[this->length]) el();
+        return x;
+    }
+    // Should be used only during initialization.
+    __device__ void unsafe_set_length(default_int i) {
+        assert(""The new length should be in range."" && 0 <= i && i <= max_length);
+        this->length = i;
+    }
+};
+
+template <typename el, default_int max_length>
+struct dynamic_array_base
+{
+    int refc{ 0 };
+    el* ptr;
+
+    __device__ dynamic_array_base() : ptr(new el[max_length]) {}
+    __device__ ~dynamic_array_base() { delete[] this->ptr; }
+
+    __device__ el& operator[](default_int i) {
+        assert(""The index has to be in range."" && 0 <= i && i < this->length);
+        return this->ptr[i];
+    }
+};
+
+template <typename el, default_int max_length>
+struct dynamic_array
+{
+    sptr<dynamic_array_base<el, max_length>> ptr;
+
+    __device__ dynamic_array() = default;
+    __device__ dynamic_array(bool t) : ptr(new dynamic_array_base<el, max_length>()) {}
+    __device__ el& operator[](default_int i) {
+        return this->ptr.base->operator[](i);
+    }
+};
+
+template <typename el, default_int max_length>
+struct dynamic_array_list_base
+{
+    int refc{ 0 };
+    default_int length{ 0 };
+    el* ptr;
+
+    __device__ dynamic_array_list_base() : ptr(new el[max_length]) {}
+    __device__ dynamic_array_list_base(default_int l) : ptr(new el[max_length]) { this->unsafe_set_length(l); }
+    __device__ ~dynamic_array_list_base() { delete[] this->ptr; }
+
+    __device__ el& operator[](default_int i) {
+        assert(""The index has to be in range."" && 0 <= i && i < this->length);
+        return this->ptr[i];
+    }
+    __device__ void push(el& x) {
+        ptr[this->length++] = x;
+        assert(""The array after pushing should not be greater than max length."" && this->length <= max_length);
+    }
+    __device__ void push(el&& x) {
+        ptr[this->length++] = std::move(x);
+        assert(""The array after pushing should not be greater than max length."" && this->length <= max_length);
+    }
+    __device__ el pop() {
+        assert(""The array before popping should be greater than 0."" && 0 < this->length);
+        auto x = ptr[--this->length];
+        ptr[this->length].~el();
+        new (&ptr[this->length]) el();
+        return x;
+    }
+    // Should be used only during initialization.
+    __device__ void unsafe_set_length(default_int i) {
+        assert(""The new length should be in range."" && 0 <= i && i <= max_length);
+        this->length = i;
+    }
+};
+
+template <typename el, default_int max_length>
+struct dynamic_array_list
+{
+    sptr<dynamic_array_list_base<el, max_length>> ptr;
+
+    __device__ dynamic_array_list() = default;
+    __device__ dynamic_array_list(default_int l) : ptr(new dynamic_array_list_base<el, max_length>(l)) {}
+
+    __device__ el& operator[](default_int i) {
+        return this->ptr.base->operator[](i);
+    }
+    __device__ void push(el& x) {
+        this->ptr.base->push(x);
+    }
+    __device__ void push(el&& x) {
+        this->ptr.base->push(std::move(x));
+    }
+    __device__ el pop() {
+        return this->ptr.base->pop();
+    }
+    // Should be used only during initialization.
+    __device__ void unsafe_set_length(default_int i) {
+        this->ptr.base->unsafe_set_length(i);
+    }
+    __device__ default_int length_() {
+        return this->ptr.base->length;
+    }
+};
+""""""
+class static_array():
+    def __init__(self, length):
+        self.ptr = []
+        for _ in range(length):
+            self.ptr.append(None)
+
+    def __getitem__(self, index):
+        assert 0 <= index < len(self.ptr), ""The get index needs to be in range.""
+        return self.ptr[index]
+    
+    def __setitem__(self, index, value):
+        assert 0 <= index < len(self.ptr), ""The set index needs to be in range.""
+        self.ptr[index] = value
+
+class static_array_list(static_array):
+    def __init__(self, length):
+        super().__init__(length)
+        self.length = 0
+
+    def __getitem__(self, index):
+        assert 0 <= index < self.length, ""The get index needs to be in range.""
+        return self.ptr[index]
+    
+    def __setitem__(self, index, value):
+        assert 0 <= index < self.length, ""The set index needs to be in range.""
+        self.ptr[index] = value
+
+    def push(self,value):
+        assert (self.length < len(self.ptr)), ""The length before pushing has to be less than the maximum length of the array.""
+        self.ptr[self.length] = value
+        self.length += 1
+
+    def pop(self):
+        assert (0 < self.length), ""The length before popping has to be greater than 0.""
+        self.length -= 1
+        return self.ptr[self.length]
+
+    def unsafe_set_length(self,i):
+        assert 0 <= i <= len(self.ptr), ""The new length has to be in range.""
+        self.length = i
+
+class dynamic_array(static_array): 
+    pass
+
+class dynamic_array_list(static_array_list):
+    def length_(self): return self.length
+
+
+kernels_main = r""""""
+""""""
+from main_auto import *
+kernels = kernels_aux + kernels_main
+import cupy as cp
+import numpy as np
+from dataclasses import dataclass
+from typing import NamedTuple, Union, Callable, Tuple
+i8 = int; i16 = int; i32 = int; i64 = int; u8 = int; u16 = int; u32 = int; u64 = int; f32 = float; f64 = float; char = str; string = str
+cuda = False
+
+
+# fwd_dcls
+# types
+# functions
+# main_defs
+def main_body():
+    return 0.3325000000000001
+
+def main():
+    r = main_body()
+    if cuda: cp.cuda.get_current_stream().synchronize() # This line is here so the `__trap()` calls on the kernel aren't missed.
+    return r
+
+if __name__ == '__main__': result = main(); None if result is None else print(result)
+",
+        []
+    )
+)
+
+#!fsharp
+
+//// test
+
+"""
+inl init_series start end inc =
+    inl total : f64 = conv ((end - start) / inc) + 1
+    listm.init total (conv >> (*) inc >> (+) start) : list f64
+
+type integration = (f64 -> f64) -> f64 -> f64 -> f64
+
+inl integral dt : integration =
+    fun f a b =>
+        init_series (a + dt / 2) (b - dt / 2) dt
+        |> listm.map (f >> (*) dt)
+        |> listm.fold (+) 0
+
+inl main () =
+    integral 0.1 (fun x => x ** 2) 0 1 |> convert : i32
+"""
+|> fun code -> Spi (code, None)
+|> buildCode Cpp [||] false 10000 None
+|> Async.runWithTimeout 11000
+|> Option.map (fun (_, (_, outputContent), errors) -> outputContent, errors |> List.map fst)
+|> _assertEqual (
+    Some (
+        Some @"// The types of these two will be replaced during compilation by the Spiral code generator. 
+// It matches on `using default_int = ` and `;` with the inner part being replaced so the form should be kept as is. 
+// The two statements need to begin at the start of a line.
+using default_int = int;
+using default_uint = unsigned int;
+
+#ifndef __NVRTC__
+// NVRTC has these includes by default so they need to be left out if it is used as the compiler.
+#include <new>
+#include <assert.h>
+#include <stdio.h>
+#endif
+
+// For error checking on the host.
+#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+template <typename T> inline __host__ __device__ void destroy(T& obj) { obj.~T(); }
+inline void gpuAssert(cudaError error, const char *file, int line, bool abort=true) {
+    if (error != cudaSuccess) {
+        fprintf(stderr, ""GPUassert: %s %s %d\n"", cudaGetErrorString(error), file, line);
+        if (abort) exit(error);
+    }
+}
+
+template <typename el>
+struct sptr // Shared pointer for the Spiral datatypes. They have to have the refc field inside them to work.
+{
+    el* base;
+
+    __host__ __device__ sptr() : base(nullptr) {}
+    __host__ __device__ sptr(el* ptr) : base(ptr) { this->base->refc++; }
+
+    __host__ __device__ ~sptr()
+    {
+        if (this->base != nullptr && --this->base->refc == 0)
+        {
+            delete this->base;
+            this->base = nullptr;
+        }
+    }
+
+    __host__ __device__ sptr(sptr& x)
+    {
+        this->base = x.base;
+        this->base->refc++;
+    }
+
+    __host__ __device__ sptr(sptr&& x)
+    {
+        this->base = x.base;
+        x.base = nullptr;
+    }
+
+    __host__ __device__ sptr& operator=(sptr& x)
+    {
+        if (this->base != x.base)
+        {
+            delete this->base;
+            this->base = x.base;
+            this->base->refc++;
+        }
+        return *this;
+    }
+
+    __host__ __device__ sptr& operator=(sptr&& x)
+    {
+        if (this->base != x.base)
+        {
+            delete this->base;
+            this->base = x.base;
+            x.base = nullptr;
+        }
+        return *this;
+    }
+};
+
+template <typename el>
+struct csptr : public sptr<el>
+{ // Shared pointer for closures specifically.
+    using sptr<el>::sptr;
+    template <typename... Args>
+    __host__ __device__ auto operator()(Args... args) -> decltype(this->base->operator()(args...))
+    {
+        return this->base->operator()(args...);
+    }
+};
+
+template <typename el, default_int max_length>
+struct static_array
+{
+    el ptr[max_length];
+    __host__ __device__ el& operator[](default_int i) {
+        assert(""The index has to be in range."" && 0 <= i && i < max_length);
+        return this->ptr[i];
+    }
+};
+
+template <typename el, default_int max_length>
+struct static_array_list
+{
+    default_int length{ 0 };
+    el ptr[max_length];
+
+    __host__ __device__ el& operator[](default_int i) {
+        assert(""The index has to be in range."" && 0 <= i && i < this->length);
+        return this->ptr[i];
+    }
+    __host__ __device__ void push(el& x) {
+        ptr[this->length++] = x;
+        assert(""The array after pushing should not be greater than max length."" && this->length <= max_length);
+    }
+    __host__ __device__ void push(el&& x) {
+        ptr[this->length++] = std::move(x);
+        assert(""The array after pushing should not be greater than max length."" && this->length <= max_length);
+    }
+    __host__ __device__ el pop() {
+        assert(""The array before popping should be greater than 0."" && 0 < this->length);
+        auto x = ptr[--this->length];
+        ptr[this->length].~el();
+        new (&ptr[this->length]) el();
+        return x;
+    }
+    // Should be used only during initialization.
+    __host__ __device__ void unsafe_set_length(default_int i) {
+        assert(""The new length should be in range."" && 0 <= i && i <= max_length);
+        this->length = i;
+    }
+};
+
+template <typename el, default_int max_length>
+struct dynamic_array_base
+{
+    int refc{ 0 };
+    el* ptr;
+
+    __host__ __device__ dynamic_array_base() : ptr(new el[max_length]) {}
+    __host__ __device__ ~dynamic_array_base() { delete[] this->ptr; }
+
+    __host__ __device__ el& operator[](default_int i) {
+        assert(""The index has to be in range."" && 0 <= i && i < this->length);
+        return this->ptr[i];
+    }
+};
+
+template <typename el, default_int max_length>
+struct dynamic_array
+{
+    sptr<dynamic_array_base<el, max_length>> ptr;
+
+    __host__ __device__ dynamic_array() = default;
+    __host__ __device__ dynamic_array(bool t) : ptr(new dynamic_array_base<el, max_length>()) {}
+    __host__ __device__ el& operator[](default_int i) {
+        return this->ptr.base->operator[](i);
+    }
+};
+
+template <typename el, default_int max_length>
+struct dynamic_array_list_base
+{
+    int refc{ 0 };
+    default_int length{ 0 };
+    el* ptr;
+
+    __host__ __device__ dynamic_array_list_base() : ptr(new el[max_length]) {}
+    __host__ __device__ dynamic_array_list_base(default_int l) : ptr(new el[max_length]) { this->unsafe_set_length(l); }
+    __host__ __device__ ~dynamic_array_list_base() { delete[] this->ptr; }
+
+    __host__ __device__ el& operator[](default_int i) {
+        assert(""The index has to be in range."" && 0 <= i && i < this->length);
+        return this->ptr[i];
+    }
+    __host__ __device__ void push(el& x) {
+        ptr[this->length++] = x;
+        assert(""The array after pushing should not be greater than max length."" && this->length <= max_length);
+    }
+    __host__ __device__ void push(el&& x) {
+        ptr[this->length++] = std::move(x);
+        assert(""The array after pushing should not be greater than max length."" && this->length <= max_length);
+    }
+    __host__ __device__ el pop() {
+        assert(""The array before popping should be greater than 0."" && 0 < this->length);
+        auto x = ptr[--this->length];
+        ptr[this->length].~el();
+        new (&ptr[this->length]) el();
+        return x;
+    }
+    // Should be used only during initialization.
+    __host__ __device__ void unsafe_set_length(default_int i) {
+        assert(""The new length should be in range."" && 0 <= i && i <= max_length);
+        this->length = i;
+    }
+};
+
+template <typename el, default_int max_length>
+struct dynamic_array_list
+{
+    sptr<dynamic_array_list_base<el, max_length>> ptr;
+
+    __host__ __device__ dynamic_array_list() = default;
+    __host__ __device__ dynamic_array_list(default_int l) : ptr(new dynamic_array_list_base<el, max_length>(l)) {}
+
+    __host__ __device__ el& operator[](default_int i) {
+        return this->ptr.base->operator[](i);
+    }
+    __host__ __device__ void push(el& x) {
+        this->ptr.base->push(x);
+    }
+    __host__ __device__ void push(el&& x) {
+        this->ptr.base->push(std::move(x));
+    }
+    __host__ __device__ el pop() {
+        return this->ptr.base->pop();
+    }
+    // Should be used only during initialization.
+    __host__ __device__ void unsafe_set_length(default_int i) {
+        this->ptr.base->unsafe_set_length(i);
+    }
+    __host__ __device__ default_int length_() {
+        return this->ptr.base->length;
+    }
+};
+#include ""main.auto.cu""
+namespace Device {
+}
+int main_body() {
+    int v3;
+    v3 = ;
+    return v3;
+}
+int main(){
+    auto r = main_body();
+    gpuErrchk(cudaDeviceSynchronize()); // This line is here so the `__trap()` calls on the kernel aren't missed.
+    return r;
+}
+",
+        []
+    )
+)
+
+#!fsharp
+
+//// test
+
+"""
+inl init_series start end inc =
+    inl total : f64 = conv ((end - start) / inc) + 1
+    listm.init total (conv >> (*) inc >> (+) start) : list f64
+
+type integration = (f64 -> f64) -> f64 -> f64 -> f64
+
+inl integral dt : integration =
+    fun f a b =>
+        init_series (a + dt / 2) (b - dt / 2) dt
+        |> listm.map (f >> (*) dt)
+        |> listm.fold (+) 0
+
+inl main () =
+    integral 0.1 (fun x => x ** 2) 0 1
+"""
+|> fun code -> Spi (code, None)
+|> buildCode Gleam [||] false 10000 None
+|> Async.runWithTimeout 11000
+|> Option.map (fun (_, (_, outputContent), errors) -> outputContent, errors |> List.map fst)
+|> _assertEqual (
+    Some (
+        Some "pub fn main () { 0.3325000000000001\n }",
+        []
+    )
+)
+
+#!fsharp
+
+//// test
+
+SpiralTrace.TraceLevel.US0_0 |> set_trace_level
+"""
+inl init_series start end inc =
+    inl total : f64 = conv ((end - start) / inc) + 1
+    listm.init total (conv >> (*) inc >> (+) start) : list f64
+
+type integration = (f64 -> f64) -> f64 -> f64 -> f64
+
+inl integral dt : integration =
+    fun f a b =>
+        init_series (a + dt / 2) (b - dt / 2) dt
+        |> listm.map (f >> (*) dt)
+        |> listm.fold (+) 0
+
+inl main () =
+    integral 0.01 (fun x => x ** 2) 0 1
+"""
+|> fun code -> Spi (code, None)
+|> buildCode Fsharp [||] false 10000 None
+|> Async.runWithTimeout 11000
+|> Option.map (fun (_, (_, outputContent), errors) -> outputContent, errors |> List.map fst)
+|> _assertEqual (
+    Some (
+        Some "0.33332500000000004\n",
+        []
+    )
+)
+// |> _assertEqual None
+// |> fun x -> printfn $"{x.ToDisplayString ()}"
+
+#!fsharp
+
+//// test
+
+SpiralTrace.TraceLevel.US0_0 |> set_trace_level
+""
+|> fun code -> Spi (code, None)
+|> buildCode Fsharp [||] false 10000 None
+|> Async.runWithTimeout 11000
+|> Option.map (fun (_, (_, outputContent), errors) -> outputContent, errors |> List.map fst)
+|> _assertEqual (
+    Some (
+        None,
+        [ "Cannot find `main` in file main." ]
+    )
+)
+
+#!fsharp
+
+//// test
+
+SpiralTrace.TraceLevel.US0_0 |> set_trace_level
+"""inl main () =
+    1i32 / 0i32
+"""
+|> fun code -> Spi (code, None)
+|> buildCode Fsharp [||] false 10000 None
+|> Async.runWithTimeout 11000
+|> Option.map (fun (_, (_, outputContent), errors) -> outputContent, errors |> List.map fst)
+|> _assertEqual (
+    Some (
+        None,
+        [ "An attempt to divide by zero has been detected at compile time." ]
+    )
+)
+
+#!fsharp
+
+//// test
+
+SpiralTrace.TraceLevel.US0_0 |> set_trace_level
+"""
+inl main () =
+    real
+        inl unbox_real forall a. (obj : a) : a =
+            typecase obj with
+            | _ => obj
+        unbox_real ()
+    ()
+"""
+|> fun code -> Spi (code, None)
+|> buildCode Fsharp [||] false 10000 None
+|> Async.runWithTimeout 11000
+|> Option.map (fun (_, (_, outputContent), errors) -> outputContent, errors |> List.map fst)
+|> _assertEqual (
+    Some (
+        None,
+        [ "Cannot apply a forall with a term." ]
+    )
+)
+
+#!fsharp
+
+//// test
+
+SpiralTrace.TraceLevel.US0_0 |> set_trace_level
+"""
+inl main () =
+    real
+        inl unbox_real forall a. (obj : a) : a =
+            typecase obj with
+            | _ => obj
+        unbox_real `i32 1
+"""
+|> fun code -> Spi (code, None)
+|> buildCode Fsharp [||] false 10000 None
+|> Async.runWithTimeout 11000
+|> Option.map (fun (_, (_, outputContent), errors) -> outputContent, errors |> List.map fst)
+|> _assertEqual (
+    Some (
+        None,
+        [ "The main function should not have a forall." ]
+    )
+)
+
+#!fsharp
+
+//// test
+
+SpiralTrace.TraceLevel.US0_0 |> set_trace_level
+"""
+inl main () =
+    real
+        inl unbox_real forall a. (obj : a) : a =
+            typecase obj with
+            | _ => obj
+        unbox_real ()
+    ()
+"""
+|> fun code -> Spi (code, None)
+|> buildCode Fsharp [||] false 10000 None
+|> Async.runWithTimeout 11000
+|> Option.map (fun (_, (_, outputContent), errors) -> outputContent, errors |> List.map fst)
+|> _assertEqual (
+    Some (
+        None,
+        [ "Cannot apply a forall with a term." ]
+    )
+)
+
+#!fsharp
+
+//// test
+
+SpiralTrace.TraceLevel.US0_0 |> set_trace_level
+"""inl main () =
+    1 + ""
+"""
+|> fun code -> Spi (code, None)
+|> buildCode Fsharp [||] false 10000 None
+|> Async.runWithTimeout 11000
+|> Option.map (fun (_, (_, outputContent), errors) -> outputContent, errors |> List.map fst)
+|> _assertEqual (
+    Some (
+        None,
+        [
+            "main.spi:
+Constraint satisfaction error.
+Got: string
+Fails to satisfy: number"
+        ]
+    )
+)
+
+#!fsharp
+
+//// test
+
+SpiralTrace.TraceLevel.US0_0 |> set_trace_level
+"""inl main () =
+    x + y
+"""
+|> fun code -> Spi (code, None)
+|> buildCode Fsharp [||] false 10000 None
+|> Async.runWithTimeout 11000
+|> Option.map (fun (_, (_, outputContent), errors) -> outputContent, errors |> List.map fst)
+|> _assertEqual (
+    Some (
+        None,
+        [
+            "main.spi:
+Unbound variable: x.
+Unbound variable: y."
+        ]
+    )
+)
+
+#!fsharp
+
+//// test
+
+SpiralTrace.TraceLevel.US0_0 |> set_trace_level
+"""inl rec main () = main"""
+|> fun code -> Spi (code, None)
+|> buildCode Fsharp [||] false 10000 None
+|> Async.runWithTimeout 11000
+|> Option.map (fun (_, (_, outputContent), errors) -> outputContent, errors |> List.map fst)
+|> _assertEqual (
+    Some (
+        None,
+        [
+            "main.spi:
+Recursive metavariables are not allowed. A metavar cannot be unified with a type that has itself.
+Got:      'a
+Expected: () -> 'a"
+        ]
+    )
+)
+// |> _assertEqual None
+// |> fun x -> printfn $"{x.ToDisplayString ()}"
+
+#!markdown
+
+## getFileTokenRange
+
+#!fsharp
+
+let getFileTokenRange port cancellationToken path = async {
+    let fullPath = path |> System.IO.Path.GetFullPath
+    let codeDir = fullPath |> System.IO.Path.GetDirectoryName
+    let tokensPath = codeDir </> "tokens.json"
+    let! tokens = async {
+        if tokensPath |> System.IO.File.Exists |> not
+        then return None
+        else
+            let! text = tokensPath |> SpiralFileSystem.read_all_text_async
+
+            return
+                if text.Length > 2
+                then text |> FSharp.Json.Json.deserialize<int array> |> Some
+                else None
+    }
+
+    match tokens with
+    | Some tokens ->
+        return tokens |> Some
+    | None ->
+        let! code = fullPath |> SpiralFileSystem.read_all_text_async
+        let lines = code |> SpiralSm.split "\n"
+
+        let struct (token, disposable) = SpiralThreading.new_disposable_token cancellationToken
+        use _ = disposable
+
+        let port = port |> Option.defaultWith getCompilerPort
+        // let! serverPort, _errors, ct, disposable = awaitCompiler port (Some token)
+        // use _ = disposable
+
+        let fullPathUri = fullPath |> SpiralFileSystem.normalize_path |> SpiralFileSystem.new_file_uri
+
+        // let fileOpenObj = {| FileOpen = {| uri = fullPathUri; spiText = code |} |}
+        // let! _fileOpenResult = fileOpenObj |> sendObj serverPort
+        let fileOpenArgs = {| uri = fullPathUri; spiText = code |}
+        let! _fileOpenResult =
+            server2.job_null (server2.supervisor *<+ SupervisorReq.FileOpen fileOpenArgs)
+            |> Async.AwaitTask
+
+        // do! Async.Sleep 60
+
+        let fileTokenRangeArgs =
+            {|
+                uri = fullPathUri
+                range =
+                    {|
+                        line = 0
+                        character = 0
+                    |},
+                    {|
+                        line = lines.Length - 1
+                        character = lines.[lines.Length - 1].Length
+                    |}
+            |}
+        // let! fileTokenRangeResult =
+        //     fileTokenRangeObj
+        //     |> sendObj serverPort
+        //     |> Async.withCancellationToken ct
+
+        // let fileTokenRangeArgs = {| uri = fullPathUri; backend = backendId |}
+        let! fileTokenRangeResult =
+            server2.job_val (fun res -> server2.supervisor *<+ SupervisorReq.FileTokenRange(fileTokenRangeArgs,res))
+            |> Async.AwaitTask
+
+        if codeDir |> SpiralSm.starts_with (workspaceRoot </> "target") then
+            let fileDirUri = codeDir |> SpiralFileSystem.normalize_path |> SpiralFileSystem.new_file_uri
+            // let fileDeleteObj = {| FileDelete = {| uris = [| fileDirUri |] |} |}
+            // let! _fileDeleteResult = fileDeleteObj |> sendObj serverPort
+            let fileDeleteArgs = {| uris = [| fileDirUri |] |}
+            let! _fileDeleteResult =
+                server2.job_null (server2.supervisor *<+ SupervisorReq.FileDelete fileDeleteArgs)
+                |> Async.AwaitTask
+            ()
+
+        return fileTokenRangeResult |> FSharp.Json.Json.deserialize<int array> |> Some
+}
+
+#!markdown
+
+## getCodeTokenRange
+
+#!fsharp
+
+let getCodeTokenRange cancellationToken code = async {
+    let! mainPath, _ =
+        persistCode {| input = Spi (code, None); backend = None; packages = [||] |}
+    return! mainPath |> getFileTokenRange None cancellationToken
+}
+
+#!fsharp
+
+//// test
+
+"""inl main () = ()"""
+|> getCodeTokenRange None
+|> Async.runWithTimeout 10000
+|> Option.flatten
+|> _assertEqual (Some [| 0; 0; 3; 7; 0; 0; 4; 4; 0; 0; 0; 5; 1; 8; 0; 0; 1; 1; 8; 0; 0; 2; 1; 4; 0; 0;
+2; 1; 8; 0; 0; 1; 1; 8; 0 |])
+
+#!fsharp
+
+//// test
+
+"""inl main () = 1i32"""
+|> getCodeTokenRange None
+|> Async.runWithTimeout 10000
+|> Option.flatten
+|> _assertEqual (Some [| 0; 0; 3; 7; 0; 0; 4; 4; 0; 0; 0; 5; 1; 8; 0; 0; 1; 1; 8; 0; 0; 2; 1; 4; 0; 0;
+2; 1; 3; 0; 0; 1; 3; 12; 0 |])
+
+#!markdown
+
+## getFileHoverAt
+
+#!fsharp
+
+let getFileHoverAt
+    port
+    cancellationToken
+    path
+    (position : {| line: int; character: int |})
+    = async {
+    let fullPath = path |> System.IO.Path.GetFullPath
+    let! code = fullPath |> SpiralFileSystem.read_all_text_async
+    let lines = code |> SpiralSm.split "\n"
+
+    let struct (token, disposable) = SpiralThreading.new_disposable_token cancellationToken
+    use _ = disposable
+
+    let port = port |> Option.defaultWith getCompilerPort
+    // let! serverPort, _errors, ct, disposable = awaitCompiler port (Some token)
+    // use _ = disposable
+
+    let fullPathUri = fullPath |> SpiralFileSystem.normalize_path |> SpiralFileSystem.new_file_uri
+
+    // let fileOpenObj = {| FileOpen = {| uri = fullPathUri; spiText = code |} |}
+    // let! _fileOpenResult = fileOpenObj |> sendObj serverPort
+    let fileOpenArgs = {| uri = fullPathUri; spiText = code |}
+    let! _fileOpenResult =
+        server1.job_null (server1.supervisor *<+ SupervisorReq.FileOpen fileOpenArgs)
+        |> Async.AwaitTask
+
+    // do! Async.Sleep 60
+
+    let hoverAtArgs =
+            {|
+                uri = fullPathUri
+                pos = position
+            |}
+
+    let! hoverAtResult =
+        server1.job_val (fun res -> server1.supervisor *<+ SupervisorReq.HoverAt(hoverAtArgs,res))
+        |> Async.AwaitTask
+
+    let fileDir = fullPath |> System.IO.Path.GetDirectoryName
+    if fileDir |> SpiralSm.starts_with (workspaceRoot </> "target") then
+        let fileDirUri = fileDir |> SpiralFileSystem.normalize_path |> SpiralFileSystem.new_file_uri
+        // let fileDeleteObj = {| FileDelete = {| uris = [| fileDirUri |] |} |}
+        // let! _fileDeleteResult = fileDeleteObj |> sendObj serverPort
+        let fileDeleteArgs = {| uris = [| fileDirUri |] |}
+        let! _fileDeleteResult =
+            server1.job_null (server1.supervisor *<+ SupervisorReq.FileDelete fileDeleteArgs)
+            |> Async.AwaitTask
+            |> Async.runWithTimeoutAsync 60000
+            |> Async.map Option.get
+        ()
+
+    return hoverAtResult |> Some
+}
+
+#!markdown
+
+## getCodeHoverAt
+
+#!fsharp
+
+let getCodeHoverAt cancellationToken code position = async {
+    let! mainPath, _ =
+        persistCode {| input = Spi (code, None); backend = None; packages = [||] |}
+
+    let codeDir = mainPath |> System.IO.Path.GetDirectoryName
+    let filePath = codeDir </> "hover.json"
+    let! output = async {
+        if filePath |> System.IO.File.Exists |> not
+        then return None
+        else
+            let! text = filePath |> SpiralFileSystem.read_all_text_async
+
+            return
+                if text.Length > 2
+                then text |> Some
+                else None
+    }
+    match output with
+    | Some output ->
+        return output |> Some
+    | None -> return! getFileHoverAt None cancellationToken mainPath position
+}
+
+#!fsharp
+
+//// test
+
+getCodeHoverAt None """inl main () = ()""" {| line = 0; character = 4 |}
+|> Async.runWithTimeout 10000
+|> Option.flatten
+|> _assertEqual (Some "() -> ()")
+
+#!fsharp
+
+//// test
+
+getCodeHoverAt None """inl main () = ()""" {| line = 0; character = 0 |}
+|> Async.runWithTimeout 10000
+|> Option.flatten
+|> _assertEqual (Some null)
+
+#!fsharp
+
+//// test
+
+getCodeHoverAt None """inl rec main () = main""" {| line = 0; character = 8 |}
+|> Async.runWithTimeout 10000
+|> Option.flatten
+|> _assertEqual (Some "forall 'a. () -> 'a")
+
+#!fsharp
+
+//// test
+
+getCodeHoverAt None """inl main () = 1""" {| line = 0; character = 4 |}
+|> Async.runWithTimeout 10000
+|> Option.flatten
+|> _assertEqual (Some "forall 'a {number}. () -> 'a")
+
+#!markdown
+
+## Arguments
+
+#!fsharp
+
+[<RequireQualifiedAccess>]
+type Arguments =
+    | Build_File of string * string
+    | File_Token_Range of string * string
+    | File_Hover_At of string * string * int * int
+    | Execute_Command of string
+    | [<Argu.ArguAttributes.Unique>] Timeout of int
+    | [<Argu.ArguAttributes.Unique>] Port of int
+    | [<Argu.ArguAttributes.Unique>] Parallel
+    | [<Argu.ArguAttributes.Unique>] Exit_On_Error
+
+    interface Argu.IArgParserTemplate with
+        member s.Usage =
+            match s with
+            | Build_File _ -> nameof Build_File
+            | File_Token_Range _ -> nameof File_Token_Range
+            | File_Hover_At _ -> nameof File_Hover_At
+            | Execute_Command _ -> nameof Execute_Command
+            | Timeout _ -> nameof Timeout
+            | Port _ -> nameof Port
+            | Parallel -> nameof Parallel
+            | Exit_On_Error-> nameof Exit_On_Error
+
+#!fsharp
+
+//// test
+
+Argu.ArgumentParser.Create<Arguments>().PrintUsage ()
+
+#!markdown
+
+## main
+
+#!fsharp
+
+let main args =
+    SpiralTrace.TraceLevel.US0_1 |> set_trace_level
+    let argsMap = args |> Runtime.parseArgsMap<Arguments>
+
+    let buildFileActions =
+        argsMap
+        |> Map.tryFind (nameof Arguments.Build_File)
+        |> Option.defaultValue []
+        |> List.choose (function
+            | Arguments.Build_File (inputPath, outputPath) -> Some (inputPath, outputPath)
+            | _ -> None
+        )
+
+    let fileTokenRangeActions =
+        argsMap
+        |> Map.tryFind (nameof Arguments.File_Token_Range)
+        |> Option.defaultValue []
+        |> List.choose (function
+            | Arguments.File_Token_Range (inputPath, outputPath) -> Some (inputPath, outputPath)
+            | _ -> None
+        )
+
+    let fileHoverAtActions =
+        argsMap
+        |> Map.tryFind (nameof Arguments.File_Hover_At)
+        |> Option.defaultValue []
+        |> List.choose (function
+            | Arguments.File_Hover_At (inputPath, outputPath, line, character) ->
+                Some (inputPath, outputPath, line, character)
+            | _ -> None
+        )
+
+    let executeCommandActions =
+        argsMap
+        |> Map.tryFind (nameof Arguments.Execute_Command)
+        |> Option.defaultValue []
+        |> List.choose (function
+            | Arguments.Execute_Command command -> Some command
+            | _ -> None
+        )
+
+    let timeout =
+        match argsMap |> Map.tryFind (nameof Arguments.Timeout) with
+        | Some [ Arguments.Timeout timeout ] -> timeout
+        | _ -> 60002 * 60 * 24
+
+    let port =
+        match argsMap |> Map.tryFind (nameof Arguments.Port) with
+        | Some [ Arguments.Port port ] -> Some port
+        | _ -> None
+
+    let isParallel = argsMap |> Map.containsKey (nameof Arguments.Parallel)
+
+    let isExitOnError = argsMap |> Map.containsKey (nameof Arguments.Exit_On_Error)
+
+    async {
+        let port =
+            port
+            |> Option.defaultWith getCompilerPort
+        let struct (localToken, disposable) = SpiralThreading.new_disposable_token None
+        // let! serverPort, _errors, compilerToken, disposable = awaitCompiler port (Some localToken)
+        let serverPort = port
+        let struct (compilerToken, disposable) = SpiralThreading.new_disposable_token None
+        use _ = disposable
+
+        let buildFileAsync =
+            buildFileActions
+            |> List.map (fun (inputPath, outputPath) -> async {
+                let! _outputPath, outputCode, errors =
+                    let backend =
+                        if outputPath |> SpiralSm.ends_with ".gleam"
+                        then Gleam
+                        elif outputPath |> SpiralSm.ends_with ".fsx"
+                        then Fsharp
+                        elif outputPath |> SpiralSm.ends_with ".py"
+                        then Python
+                        elif outputPath |> SpiralSm.ends_with ".cpp"
+                        then Cpp
+                        else failwith $"Supervisor.main / invalid backend / outputPath: {outputPath}"
+                    let isReal = inputPath |> SpiralSm.ends_with ".spir"
+                    inputPath |> buildFile backend timeout (Some serverPort) None
+
+                errors
+                |> List.map snd
+                |> List.iter (fun error ->
+                    trace Critical (fun () -> $"main / error: {error |> serializeObj}") _locals
+                )
+
+                match outputCode with
+                | Some outputCode ->
+                    do! outputCode |> SpiralFileSystem.write_all_text_exists outputPath
+                    return 0
+                | None ->
+                    if isExitOnError
+                    then SpiralRuntime.current_process_kill ()
+
+                    return 1
+            })
+
+        let fileTokenRangeAsync =
+            fileTokenRangeActions
+            |> List.map (fun (inputPath, outputPath) -> async {
+                let! tokenRange = inputPath |> getFileTokenRange (Some serverPort) None
+                match tokenRange with
+                | Some tokenRange ->
+                    do! tokenRange |> FSharp.Json.Json.serialize |> SpiralFileSystem.write_all_text_exists outputPath
+                    return 0
+                | None ->
+                    if isExitOnError
+                    then SpiralRuntime.current_process_kill ()
+
+                    return 1
+            })
+
+        let fileHoverAtAsync =
+            fileHoverAtActions
+            |> List.map (fun (inputPath, outputPath, line, character) -> async {
+                let! hoverAt =
+                    getFileHoverAt
+                        (Some serverPort)
+                        None
+                        inputPath
+                        {| line = line; character = character |}
+                match hoverAt with
+                | Some hoverAt ->
+                    do! hoverAt |> FSharp.Json.Json.serialize |> SpiralFileSystem.write_all_text_exists outputPath
+                    return 0
+                | None ->
+                    if isExitOnError
+                    then SpiralRuntime.current_process_kill ()
+
+                    return 1
+            })
+
+        let executeCommandAsync =
+            executeCommandActions
+            |> List.map (fun command -> async {
+                let! exitCode, result =
+                    SpiralRuntime.execution_options (fun x ->
+                        { x with
+                            l0 = command
+                            l1 = Some compilerToken
+                        }
+                    )
+                    |> SpiralRuntime.execute_with_options_async
+
+                trace
+                    Debug
+                    (fun () ->
+                        $"Supervisor.main / executeCommand / exitCode: {exitCode} / command: {command}"
+                        + " / result"
+                        + if exitCode = 0 then ".Length" else ""
+                        + ": "
+                        + if exitCode = 0 then result |> String.length |> string else result
+                    )
+                    _locals
+
+                if isExitOnError && exitCode <> 0
+                then SpiralRuntime.current_process_kill ()
+
+                return exitCode
+            })
+
+        return!
+            [| buildFileAsync; fileTokenRangeAsync; fileHoverAtAsync; executeCommandAsync |]
+            |> Seq.collect id
+            |> fun x ->
+                if isParallel
+                then Async.Parallel (x, float System.Environment.ProcessorCount * 0.51 |> ceil |> int)
+                else Async.Sequential x
+            |> Async.map Array.sum
+    }
+    |> Async.runWithTimeout timeout
+    |> Option.defaultValue 1
+
+#!fsharp
+
+//// test
+
+let args =
+    System.Environment.GetEnvironmentVariable "ARGS"
+    |> SpiralRuntime.split_args
+    |> Result.toArray
+    |> Array.collect id
+
+match args with
+| [||] -> 0
+| args -> if main args = 0 then 0 else failwith "main failed"

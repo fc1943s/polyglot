@@ -1,0 +1,17 @@
+cargo-features = ["edition2024"]
+
+[package]
+name = "exercism"
+workspace = "../../../workspace"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+
+
+[dependencies]
+
+
+[[bin]]
+name = "exercism"
+path = "./src/main.rs"

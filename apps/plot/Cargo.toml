@@ -1,0 +1,29 @@
+cargo-features = ["edition2024"]
+
+[package]
+name = "plot"
+workspace = "../../workspace"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+
+[dependencies]
+fable_library_rust = { workspace = true, features = ["static_do_bindings", "datetime", "guid", "threaded"] }
+inline_colorization = { workspace = true }
+sha2 = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+regex = { workspace = true }
+plotters = { version = ">=0.3,<1", default-features = false, features = [
+    "svg_backend",
+    "line_series",
+    "point_series",
+] }
+
+[[bin]]
+name = "plot"
+path = "plot.rs"
+
+[lib]
+path = "lib.rs"

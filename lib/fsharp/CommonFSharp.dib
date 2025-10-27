@@ -1,0 +1,38 @@
+#!meta
+
+{"kernelInfo":{"defaultKernelName":"spiral","items":[{"aliases":[],"name":"spiral"}]}}
+
+#!markdown
+
+# CommonFSharp (Polyglot)
+
+#!fsharp
+
+#!import ../../lib/fsharp/Notebooks.dib
+#!import ../../lib/fsharp/Testing.dib
+
+#!fsharp
+
+#!import ../../lib/fsharp/Common.fs
+
+#!fsharp
+
+open Common
+
+#!markdown
+
+## getUnionCaseName
+
+#!fsharp
+
+let inline getUnionCaseName<'T> (x: 'T) =
+    match Reflection.FSharpValue.GetUnionFields(x, typeof<'T>) with
+    | case, _ -> case.Name
+
+#!fsharp
+
+//// test
+
+TraceLevel.Critical
+|> getUnionCaseName
+|> _assertEqual (nameof TraceLevel.Critical)

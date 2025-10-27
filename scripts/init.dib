@@ -1,0 +1,94 @@
+#!meta
+
+{"kernelInfo":{"defaultKernelName":"spiral","items":[{"name":"spiral"}]}}
+
+#!pwsh
+
+. ./nbs_header.ps1
+. ./core.ps1
+
+#!pwsh
+
+# rustup component add clippy rust-src rustfmt
+
+#!pwsh
+
+# rustup target add wasm32-unknown-unknown
+
+#!pwsh
+
+# rustup update
+
+#!pwsh
+
+if (!(Search-Command "cargo-outdated")) {
+    $url = git ls-remote --get-url
+    $owner = ($url -split '/' | Select-Object -Last 2 | Select-Object -First 1) -replace '\.git$', '' ?? $env:GITHUB_REPOSITORY_OWNER
+    Write-Output "scripts/init.dib / url: $url / owner: $owner"
+
+    { cargo install --git https://github.com/$owner/cargo-outdated.git --locked } | Invoke-Block -OnError Continue
+}
+
+#!pwsh
+
+if (!(Search-Command "sccache")) {
+    { cargo install sccache --locked } | Invoke-Block -OnError Continue
+}
+
+#!pwsh
+
+if (!(Search-Command "wasm-pack")) {
+    { cargo install wasm-pack --locked } | Invoke-Block -OnError Continue
+}
+
+#!pwsh
+
+if (!(Search-Command "trunk")) {
+    { cargo install trunk --version 0.21.14 } | Invoke-Block -OnError Continue
+}
+
+#!pwsh
+
+if (!(Search-Command "leptosfmt")) {
+    { cargo install --git https://github.com/bram209/leptosfmt.git --locked } | Invoke-Block -OnError Continue
+}
+
+#!pwsh
+
+if (!(Search-Command "nix")) {
+    { . $(Search-Command bunx) --bun playwright@1.44.0 install } | Invoke-Block -OnError Continue
+}
+
+#!pwsh
+
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+#!pwsh
+
+{ Install-Module -Name PowerShellGet -Force -AllowClobber -Scope CurrentUser } | Invoke-Block -OnError Continue
+
+#!pwsh
+
+{ Set-PSRepository -Name PSGallery -InstallationPolicy Trusted } | Invoke-Block -OnError Continue
+
+#!pwsh
+
+{ . $(Search-Command bun) install --cwd .. --frozen-lockfile } | Invoke-Block
+
+#!pwsh
+
+{ . "$ScriptDir/dep_spiral.ps1" } | Invoke-Block
+
+#!pwsh
+
+{ . "$ScriptDir/dep_spiral_extension.ps1" } | Invoke-Block -OnError Continue
+
+#!pwsh
+
+{ . "$ScriptDir/dep_fable.ps1" } | Invoke-Block
+
+#!pwsh
+
+if (!(Test-Path ../deps/hyperui/.next/package.json)) {
+    { . "$ScriptDir/dep_hyperui.ps1" } | Invoke-Block
+}

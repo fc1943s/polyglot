@@ -1,0 +1,73 @@
+open rust.util
+open spi_fsx_build
+open post_fsx_rs_build
+
+
+inl app () =
+    inl get_locals () = ;[!>(#"> app ()")]
+    inl log = new_log UnknownRustTarget (fun () => Debug) get_locals "387958"
+
+    inl subcommand : ref' str * arc clap_arg_matches =
+        new_clap_command "app1"
+        |> add_clap_subcommand (
+            new_clap_command "PostFsxRsBuild"
+            |> add_clap_arg (new_clap_arg "rs-path")
+        )
+        |> add_clap_subcommand (
+            new_clap_command "SpiFsxBuild"
+            |> add_clap_arg (new_clap_arg "spi-path")
+            |> add_clap_arg (new_clap_arg "fsx-path")
+        )
+        |> get_clap_matches
+        |> matches_subcommand
+        |> unwrap
+
+    inl subcommand : any = $"!subcommand"
+
+    inl name : ref' str = emit_expr () $"\"!subcommand.0\""
+    inl sub_matches : arc clap_arg_matches = emit_expr () $"\"std::sync::Arc::clone(&!subcommand.1)\""
+    inl subcommand : ref' str * ref' clap_arg_matches = $"!subcommand"
+    let name, sub_matches = subcommand
+    // inl sub_matches' = sub_matches |> arc_clone
+    // inl sub_matches'' = sub_matches |> arc_clone
+    // inl sub_matches''' = sub_matches |> arc_clone
+
+    match name |> new_string with
+    | "PostFsxRsBuild" =>
+        inl rs_path = sub_matches |> get_clap_one'' "rs-path" |> string_slice |> to_std_string |> to_path_buf |> path_canonicalize
+        post_fsx_rs_build rs_path
+    | "SpiFsxBuild" =>
+        inl spi_path = sub_matches |> get_clap_one'' "spi-path" |> string_slice |> to_std_string |> to_path_buf |> path_canonicalize
+        inl fsx_path = sub_matches |> get_clap_one''' "fsx-path" |> option_map to_path_buf
+        inl fsx = spi_to_fsx spi_path fsx_path
+        log Debug ;[!>"fsx.len"; !>(fsx |> sm.length : i32)]
+    | _ => ()
+
+    log Debug ;[!>"cli end"; !>"???"]
+
+    0i32
+
+
+inl main () =
+    print_static "<cli>"
+
+    inl test1 () =
+        inl str : ref' str = #"cli2"
+
+        inl str : std_string = str |> to_std_string
+        inl x : option' std_string = some' str
+        inl x : option' string = x |> option_map (fun x => x |> to_string)
+
+        x
+        |> format
+        |> console_fsx.write_line
+
+    inl app () =
+        test1 ()
+        app ()
+
+    app
+    |> dyn
+    |> ignore
+
+    print_static "</cli>"

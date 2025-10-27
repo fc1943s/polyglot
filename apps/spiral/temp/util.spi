@@ -1,0 +1,130 @@
+
+open real_util
+
+
+type ticks = i64
+nominal any = $"obj"
+nominal exn = $"exn"
+nominal guid = $"System.Guid"
+nominal date_time = $"System.DateTime"
+nominal disposable = $"System.IDisposable"
+nominal async t = $"Async<`t>"
+
+prototype (~!!) r : forall t. t -> r
+prototype to_string t : t -> string
+prototype of_string t : string -> t
+prototype append t : t -> t -> t
+
+instance append list t = listm.append
+instance append a dim {int; number} t = am.append
+
+union log_level_type =
+    | Verbose
+    | Debug
+    | Info
+    | Warn
+    | Error
+
+instance to_string log_level_type = function
+    | Debug => "Debug"
+    | Info => "Info"
+    | Warn => "Warn"
+    | Error => "Error"
+    | _ => "Error"
+
+instance of_string log_level_type = function
+    | "Debug" => Debug
+    | "Info" => Info
+    | "Warn" => Warn
+    | "Error" => Error
+    | _ => Error
+
+
+// nominal array' t = array t
+// instance append array' t = fun (array' (x : array t)) (array' (y : array t)) =>
+//     failwith "util_.array'.append"
+//     y |> array'
+
+inl test b = assert b "test"
+
+inl to_string' forall t. (x : t) : string = $"(!x).ToString ()"
+instance to_string any = to_string'
+
+inl to_any forall t. (obj : t) : any = $"!obj"
+instance (~!!) any = to_any
+
+inl empty_list forall t. () : list t = Nil
+inl none forall t. () : option t = None
+inl some forall t. (x : t) : option t = Some x
+inl get_locals () : array_base any = ;[]
+inl null forall t. () : t = $"null |> unbox<`t>"
+
+type pair a b = $"(`a * `b)"
+inl new_pair forall a b. (a : a) (b : b) : pair a b = $"!a, !b"
+
+inl find_last forall item result. fold_fn fn target : option result =
+    fold_fn (fun (item : item) (result : option result) =>
+        match result with
+        | None => fn item
+        | result => result
+    ) target (None : option result)
+
+inl array_find_last forall item result. (fn : item -> option result) (target : a i32 item) : option result =
+    find_last am.foldBack fn target
+
+inl list_find_last forall item result. (fn : item -> option result) (target : list item) : option result =
+    find_last listm.foldBack fn target
+
+inl union_list_get forall union_type union_key_type value_type.
+    (union_key : union_key_type)
+    (union_list : list union_type)
+    : option value_type
+    =
+    inl record_typecheck_value : option value_type = None
+    real
+        union_record_check
+            `union_type
+            `(`({ $union_key = record_typecheck_value }))
+            { check_length = false; check_type = CheckOption }
+
+    union_list |> list_find_last fun union_item =>
+        real
+            real_core.unbox
+                union_item
+                fun (union_item_key, union_item_value) =>
+                    typecase `union_item_key * `union_key with
+                    | ~x * ~x => some `value_type union_item_value
+                    | _ => None
+
+
+inl (/@) a b = b |> append a
+inl (/??) a b = a |> optionm.defaultWith b
+// inl (/.) props key = props |> union_list_get key
+inl (/+) forall t. (a : t) (b : t) : t = $"!a + !b"
+inl (||>) (items, init) fn = items |> fn init
+
+let rec pad (count : i32) (n : string) : string =
+    inl n_length : i32 = $"String.length !n"
+    if n_length < count then pad count ($"$\"0{!n}\"" : string) else n
+
+inl string_get_bytes (s : string) : a i32 u8 = $"System.Text.Encoding.UTF8.GetBytes !s"
+inl random () : i32 = $"System.Random().Next ()"
+inl new_raw_guid () : guid = $"`guid.NewGuid ()"
+
+
+inl array_last forall t. (items : a i32 t) : t = $"Array.last !items"
+
+inl string_split (separator : char) (s : string) : a i32 string = $"!s.Split [| !separator |]"
+
+inl generate_six_digit_numeric_hash_from_string (text : string) : string =
+    text
+    |> string_get_bytes
+    |> am.fold
+        fun (acc : i32) n => acc + ((real real_unbox `u8 `i32 n) * 14)
+        100000
+    |> to_string'
+
+inl array_collect forall t r. (fn : t -> a i32 r) (items : a i32 t) : a i32 r =
+    items
+    |> am.map fn
+    |> am.fold (/@) (a ;[])

@@ -1,0 +1,71 @@
+/// ## Tasks (Polyglot)
+open sm'_operators
+
+/// ## task_id
+nominal task_id = string
+
+/// ## task_name
+nominal task_name = string
+
+/// ## manual_scheduling
+union manual_scheduling =
+    | WithSuggestion
+    | WithoutSuggestion
+
+/// ## day_offset
+nominal day_offset = int
+
+/// ## week_offset
+nominal week_offset = int
+
+/// ## month_offset
+nominal month_offset = int
+
+/// ## recurrency_offset
+union recurrency_offset =
+    | Days : day_offset
+    | Weeks : week_offset
+    | Months : month_offset
+
+/// ## fixed_recurrency
+union fixed_recurrency =
+    | Weekly : date_time.day_of_week
+    | Monthly : date_time.day
+    | Yearly : date_time.day * date_time.month
+
+/// ## recurrency
+union recurrency =
+    | Offset : recurrency_offset
+    | Fixed : list fixed_recurrency
+
+/// ## scheduling
+union scheduling =
+    | Manual : manual_scheduling
+    | Recurrent : recurrency
+
+/// ## task
+type task =
+    {
+        id : task_id
+        name : task_name
+        scheduling : scheduling
+    }
+
+/// ## date
+type date =
+    {
+        year : date_time.year
+        month : date_time.month
+        day : date_time.day
+    }
+
+/// ## status
+union status =
+    | Postponed : option ()
+
+/// ### action
+union action =
+    | SetDate : date
+    | AddTask : task
+    | SetScheduling : task * scheduling
+    | AddStatus : task * date * status

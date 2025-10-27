@@ -1,0 +1,12 @@
+#!meta
+
+{"kernelInfo":{"defaultKernelName":"spiral","items":[{"aliases":[],"name":"spiral"}]}}
+
+#!fsharp
+
+Formatter.Register<string * string> (
+    (fun (html, _mime) ->
+        html
+    ),
+    "text/html"
+)

@@ -1,0 +1,122 @@
+#!meta
+
+{"kernelInfo":{"defaultKernelName":"powershell","items":[]}}
+
+#!markdown
+
+# test
+
+#!markdown
+
+## include scripts
+
+#!markdown
+
+### include notebook core
+
+#!pwsh
+
+. ../../../../scripts/nbs_header.ps1
+
+#!markdown
+
+### Include core functions script
+
+#!pwsh
+
+. ../../../../scripts/core.ps1
+
+#!markdown
+
+### Include spiral library
+
+#!pwsh
+
+. ../../../../deps/spiral/lib/spiral/lib.ps1
+
+#!markdown
+
+## execute project commands
+
+#!markdown
+
+### run notebook with retries using spiral supervisor
+
+#!pwsh
+
+{ . ../../../../deps/spiral/workspace/target/release/spiral$(_exe) dib --path test.dib --retries 3 } | Invoke-Block
+
+#!markdown
+
+### parse the .dib file into .spi format with dibparser
+
+#!pwsh
+
+{ . ../../../../apps/parser/dist/DibParser$(_exe) test.dib spi } | Invoke-Block
+
+#!markdown
+
+### build .fsx file from .spi using supervisor
+
+#!pwsh
+
+{ . ../../../../apps/spiral/dist/Supervisor$(_exe) --build-file test.spi test.fsx } | Invoke-Block
+
+#!markdown
+
+## compile and format the project
+
+#!markdown
+
+### compile project with fable targeting optimized rust
+
+#!pwsh
+
+dotnet fable --optimize --lang rs --extension .rs
+
+#!markdown
+
+### fix formatting issues in the .rs file using regex and set-content
+
+#!pwsh
+
+(Get-Content test.rs) `
+    -replace [regex]::Escape("),);"), "));" `
+    | FixRust `
+| Set-Content test.rs
+
+#!markdown
+
+### format the rust code using cargo fmt
+
+#!pwsh
+
+cargo fmt --
+
+#!markdown
+
+## build and test the project
+
+#!markdown
+
+### build the project in release mode using nightly rust compiler
+
+#!pwsh
+
+cargo build --release
+
+#!markdown
+
+### run release tests with output enabled
+
+#!pwsh
+
+{ cargo test --release -- --show-output } | Invoke-Block
+
+#!markdown
+
+### execute the binary in release mode
+
+#!pwsh
+
+{ . $ScriptDir/../../../../workspace/target/release/spiral_temp_test$(_exe) } | Invoke-Block

@@ -1,0 +1,84 @@
+#!meta
+
+{"kernelInfo":{"defaultKernelName":"spiral","items":[{"aliases":[],"name":"spiral"}]}}
+
+#!fsharp
+
+#r @"../../../../../../../.nuget/packages/fsharp.control.asyncseq/3.2.1/lib/netstandard2.1/FSharp.Control.AsyncSeq.dll"
+#r @"../../../../../../../.nuget/packages/system.reactive/6.0.1-preview.1/lib/net6.0/System.Reactive.dll"
+#r @"../../../../../../../.nuget/packages/system.reactive.linq/6.0.1-preview.1/lib/netstandard2.0/System.Reactive.Linq.dll"
+#r @"../../../../../../../.nuget/packages/argu/6.2.4/lib/netstandard2.0/Argu.dll"
+#r @"../../../../../../../.nuget/packages/fsharp.json/0.4.1/lib/netstandard2.0/FSharp.Json.dll"
+
+#!fsharp
+
+#!import ../../../polyglot/lib/fsharp/Notebooks.dib
+
+#!fsharp
+
+#!import ../../../polyglot/lib/fsharp/Common.fs
+#!import ../../../polyglot/lib/fsharp/CommonFSharp.fs
+#!import ../../../polyglot/lib/fsharp/Async.fs
+#!import ../../../polyglot/lib/fsharp/AsyncSeq.fs
+#!import ../../../polyglot/lib/fsharp/Runtime.fs
+#!import ../../../polyglot/lib/fsharp/FileSystem.fs
+
+#!fsharp
+
+#if !INTERACTIVE
+open Lib
+#endif
+
+#!fsharp
+
+open Common
+open SpiralFileSystem.Operators
+
+#!fsharp
+
+let workspaceRoot = SpiralFileSystem.get_workspace_root ()
+let tmpSpiralPath = workspaceRoot </> "target/plot"
+let linePlotsDataPath = tmpSpiralPath </> "line_data"
+let linePlotsSvgPath = tmpSpiralPath </> "line_svg"
+
+[ tmpSpiralPath; linePlotsDataPath; linePlotsSvgPath ]
+|> List.iter (fun dir -> if Directory.Exists dir |> not then Directory.CreateDirectory dir |> ignore)
+
+Formatter.Register<struct (string * string * string * struct (string * float array * float array) array)> (
+    (fun struct (caption, x_desc, y_desc, ys) ->
+        let json = (caption, x_desc, y_desc, ys) |> FSharp.Json.Json.serialize
+        async {
+            let hashHex = json |> SpiralCrypto.hash_text
+            let svgPath = linePlotsSvgPath </> $"{hashHex}.svg"
+
+            if System.IO.File.Exists svgPath |> not then
+                do! json |> SpiralFileSystem.write_all_text_async $"{linePlotsDataPath </> hashHex}.json"
+
+                let ct = Microsoft.DotNet.Interactive.KernelInvocationContext.Current.CancellationToken
+
+                let oldLevel = get_trace_level ()
+                SpiralTrace.TraceLevel.US0_2
+                |> set_trace_level
+                use _ = (new_disposable (fun () ->
+                    oldLevel |> set_trace_level
+                ))
+
+                let plotExePath = workspaceRoot </> $"workspace/target/release/plot{SpiralPlatform.get_executable_suffix ()}"
+                let! exitCode, result =
+                    SpiralRuntime.execution_options (fun x ->
+                        { x with
+                            l0 = plotExePath
+                            l1 = Some ct
+                            l6 = Some workspaceRoot
+                        }
+                    )
+                    |> SpiralRuntime.execute_with_options_async
+                if exitCode <> 0 then
+                    return failwith $"plot failed with exit code {exitCode} and output {result}"
+            return! svgPath |> SpiralFileSystem.read_all_text_async
+        }
+        |> Async.runWithTimeout 10000
+        |> Option.defaultValue json
+    ),
+    "text/html"
+)

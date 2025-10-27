@@ -1,0 +1,72 @@
+#!meta
+
+{"kernelInfo":{"defaultKernelName":"pwsh","items":[{"name":"spiral","languageName":"Spiral","aliases":["spi","spir"]}]}}
+
+#!pwsh
+
+. ./nbs_header.ps1
+. ./core.ps1
+
+#!pwsh
+
+{ pwsh ../apps/builder/build.ps1 } | Invoke-Block
+
+#!pwsh
+
+{ pwsh ../deps/spiral/apps/spiral/build.ps1 -fast 1 -SkipFsx 1 } | Invoke-Block
+
+#!pwsh
+
+{ pwsh ../apps/parser/build.ps1 } | Invoke-Block
+
+#!pwsh
+
+{ pwsh ../apps/spiral/build.ps1 } | Invoke-Block
+
+#!pwsh
+
+{ pwsh ../lib/fsharp/build.ps1 -sequential 1 } | Invoke-Block
+
+#!pwsh
+
+{ pwsh ../deps/spiral/apps/wasm/build.ps1 -SkipFsx 1 } | Invoke-Block
+
+#!pwsh
+
+{ pwsh ../lib/math/build.ps1 } | Invoke-Block
+
+#!pwsh
+
+{ pwsh ../apps/plot/build.ps1 } | Invoke-Block
+
+#!pwsh
+
+{ pwsh ../apps/perf/build.ps1 } | Invoke-Block
+
+#!pwsh
+
+{ pwsh ../apps/dir-tree-html/build.ps1 } | Invoke-Block
+
+#!pwsh
+
+{ pwsh ../apps/scheduler/build.ps1 } | Invoke-Block
+
+#!pwsh
+
+{ pwsh ../apps/chat/build.ps1 } | Invoke-Block
+
+#!pwsh
+
+{ pwsh ../apps/spiral/temp/build.ps1 } | Invoke-Block
+
+#!pwsh
+
+{ pwsh ../apps/spiral/vscode/build.ps1 } | Invoke-Block
+
+#!pwsh
+
+{ pwsh ../apps/ipfs/build.ps1 } | Invoke-Block
+
+#!pwsh
+
+{ pwsh ./outdated.ps1 } | Invoke-Block

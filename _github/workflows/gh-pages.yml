@@ -1,0 +1,81 @@
+name: gh-pages
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    timeout-minutes: 420
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: moonrepo/setup-rust@v1
+        with:
+          channel: 'nightly-2024-10-07'
+          components: 'clippy,rust-src,rustfmt'
+          targets: 'wasm32-unknown-unknown'
+
+      - uses: i574n/setup-beam-win25@v3
+        with:
+          otp-version: '27'
+          gleam-version: '1.11.0'
+          rebar3-version: '3.24.0'
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.202"
+          cache: true
+          cache-dependency-path: paket.lock
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 21
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.10"
+
+      - uses: snok/install-poetry@v1
+        with:
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+          installer-parallel: true
+
+      - uses: awalsh128/cache-apt-pkgs-action@latest
+        if: contains(matrix.os, 'ubuntu')
+        with:
+          packages: blender
+
+      - run: pwsh scripts/workflow.ps1
+
+      - uses: actions/upload-artifact@v4
+        if: contains(matrix.os, 'ubuntu')
+        with:
+          name: gh-pages
+          path: dist
+          retention-days: 30
+
+  push:
+    needs: build
+    timeout-minutes: 180
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: gh-pages
+          path: gh-pages
+
+      - uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: gh-pages

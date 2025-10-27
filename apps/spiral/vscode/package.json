@@ -1,0 +1,62 @@
+{
+  "name": "spiral-vscode",
+  "displayName": "Spiral IDE",
+  "description": "Auxiliary utilities for Spiral in VSCode",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "bugs": {
+    "url": "https://github.com/fc1943s/polyglot/issues"
+  },
+  "repository": {
+    "url": "https://github.com/fc1943s/polyglot"
+  },
+  "publisher": "fc1943s",
+  "categories": [
+    "Notebooks",
+    "Programming Languages",
+    "Testing",
+    "Debuggers",
+    "AI",
+    "Data Science",
+    "Visualization",
+    "Education"
+  ],
+  "activationEvents": [
+    "onLanguage:spiral",
+    "onUri",
+    "onNotebook:dotnet-interactive",
+    "onNotebook:dotnet-interactive-window",
+    "onNotebook:jupyter-notebook",
+    "onNotebook:polyglot-notebook",
+    "onNotebook:polyglot-notebook-window",
+    "onNotebook:jupyter-notebook",
+    "onCommand:dotnet-interactive.acquire",
+    "onCommand:polyglot-notebook.fileNew",
+    "onCommand:polyglot-notebook.newNotebook",
+    "onCommand:polyglot-notebook.openNotebook",
+    "onCommand:polyglot-notebook.saveAsNotebook",
+    "onView:polyglot-notebook-panel-values"
+  ],
+  "main": "./out/src/extension.js",
+  "extensionDependencies": [
+    "ms-dotnettools.dotnet-interactive-vscode",
+    "mrakgr.spiral-lang-vscode"
+  ],
+  "contributes": {
+    "commands": []
+  },
+  "scripts": {
+    "outdated-pre": "npm-check-updates --target greatest"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "npm-check-updates": "~17.1.14",
+    "typescript": "next",
+    "@vscode/vsce": "~3.2-5",
+    "vscode": "~1.1",
+    "@types/node": "~22.10",
+    "@types/vscode": "~1.96"
+  }
+}

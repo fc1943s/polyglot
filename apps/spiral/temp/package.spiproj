@@ -1,0 +1,18 @@
+packageDir: ../../../deps/spiral/lib
+packages:
+    |core-
+    spiral-
+modules:
+    real_util*
+    util-
+    console_fsx
+    rust/
+        util
+    test/
+        test
+    proxy/
+        proxy
+    cli/
+        spi_fsx_build
+        post_fsx_rs_build
+        cli

@@ -1,0 +1,698 @@
+#!meta
+
+{"kernelInfo":{"defaultKernelName":"spiral","items":[{"aliases":[],"name":"spiral"}]}}
+
+#!markdown
+
+# FileSystem (Polyglot)
+
+#!fsharp
+
+#r @"../../../../../../../.nuget/packages/fsharp.control.asyncseq/3.2.1/lib/netstandard2.1/FSharp.Control.AsyncSeq.dll"
+#r @"../../../../../../../.nuget/packages/system.reactive/6.0.1-preview.1/lib/net6.0/System.Reactive.dll"
+#r @"../../../../../../../.nuget/packages/system.reactive.linq/6.0.1-preview.1/lib/netstandard2.0/System.Reactive.Linq.dll"
+#r @"../../../../../../../.nuget/packages/argu/6.2.4/lib/netstandard2.0/Argu.dll"
+
+#!fsharp
+
+#!import ../../lib/fsharp/Notebooks.dib
+#!import ../../lib/fsharp/Testing.dib
+
+#!fsharp
+
+#!import ../../lib/fsharp/Common.fs
+#!import ../../lib/fsharp/CommonFSharp.fs
+#!import ../../lib/fsharp/Async.fs
+#!import ../../lib/fsharp/AsyncSeq.fs
+#!import ../../lib/fsharp/Runtime.fs
+
+#!fsharp
+
+#if !INTERACTIVE
+open Lib
+#endif
+
+#!fsharp
+
+open Common
+open SpiralFileSystem.Operators
+
+#!markdown
+
+## watchDirectory
+
+#!fsharp
+
+[<RequireQualifiedAccess>]
+type FileSystemChangeType =
+    | Failure
+    | Changed
+    | Created
+    | Deleted
+    | Renamed
+
+[<RequireQualifiedAccess>]
+type FileSystemChange =
+    | Failure of exn: exn
+    | Changed of path: string * content: string option
+    | Created of path: string * content: string option
+    | Deleted of path: string
+    | Renamed of oldPath: string * (string * string option)
+
+
+let inline watchDirectoryWithFilter filter shouldReadContent path =
+    let fullPath = path |> System.IO.Path.GetFullPath
+    let _locals () = $"filter: {filter} / {_locals ()}"
+
+    let watcher =
+        new System.IO.FileSystemWatcher (
+            Path = fullPath,
+            NotifyFilter = filter,
+            EnableRaisingEvents = true,
+            IncludeSubdirectories = true
+        )
+
+    let inline getEventPath (path : string) =
+        path |> SpiralSm.trim |> SpiralSm.replace fullPath "" |> SpiralSm.trim_start [| '/'; '\\' |]
+
+    let inline ticks () =
+        System.DateTime.UtcNow.Ticks
+
+    let changedStream =
+        AsyncSeq.subscribeEvent
+            watcher.Changed
+            (fun event ->
+                ticks (),
+                [ FileSystemChange.Changed (getEventPath event.FullPath, None) ]
+            )
+
+    let deletedStream =
+        AsyncSeq.subscribeEvent
+            watcher.Deleted
+            (fun event ->
+                ticks (),
+                [ FileSystemChange.Deleted (getEventPath event.FullPath) ]
+            )
+
+    let createdStream =
+        AsyncSeq.subscribeEvent
+            watcher.Created
+            (fun event ->
+                let path = getEventPath event.FullPath
+                ticks (), [
+                    FileSystemChange.Created (path, None)
+                    if SpiralPlatform.is_windows () then
+                        FileSystemChange.Changed (path, None)
+                ])
+
+    let renamedStream =
+        AsyncSeq.subscribeEvent
+            watcher.Renamed
+            (fun event ->
+                ticks (), [
+                    FileSystemChange.Renamed (
+                        getEventPath event.OldFullPath,
+                        (getEventPath event.FullPath, None)
+                    )
+                ]
+            )
+
+    let failureStream =
+        AsyncSeq.subscribeEvent
+            watcher.Error
+            (fun event -> ticks (), [ FileSystemChange.Failure (event.GetException ()) ])
+
+    let stream =
+        [
+            changedStream
+            deletedStream
+            createdStream
+            renamedStream
+            failureStream
+        ]
+        |> FSharp.Control.AsyncSeq.mergeAll
+        |> FSharp.Control.AsyncSeq.map (fun (t, events) ->
+            events
+            |> List.fold
+                (fun (i, events) event ->
+                    i + 1L,
+                    (t + i, event) :: events)
+                (0L, [])
+            |> snd
+            |> List.rev
+        )
+        |> FSharp.Control.AsyncSeq.concatSeq
+        |> FSharp.Control.AsyncSeq.mapAsyncParallel (fun (t, event) -> async {
+            match shouldReadContent event, event with
+            | true, FileSystemChange.Changed (path, _) ->
+                do! Async.Sleep 5
+                let! content = fullPath </> path |> SpiralFileSystem.read_all_text_retry_async
+                return t, FileSystemChange.Changed (path, content)
+            | true, FileSystemChange.Created (path, _) ->
+                do! Async.Sleep 5
+                let! content = fullPath </> path |> SpiralFileSystem.read_all_text_retry_async
+                return t, FileSystemChange.Created (path, content)
+            | true, FileSystemChange.Renamed (oldPath, (newPath, _)) ->
+                let! content = fullPath </> newPath |> SpiralFileSystem.read_all_text_retry_async
+                return t, FileSystemChange.Renamed (oldPath, (newPath, content))
+            | _ -> return t, event
+        })
+
+    let disposable =
+        new_disposable (fun () ->
+            trace Debug (fun () -> "FileSystem.watchWithFilter / Disposing watch stream") _locals
+            watcher.EnableRaisingEvents <- false
+            watcher.Dispose ()
+        )
+
+    stream, disposable
+
+let inline watchDirectory path =
+    watchDirectoryWithFilter
+        (System.IO.NotifyFilters.FileName
+        // ||| System.IO.NotifyFilters.DirectoryName
+        // ||| System.IO.NotifyFilters.Attributes
+        //// ||| System.IO.NotifyFilters.Size
+        ||| System.IO.NotifyFilters.LastWrite
+        //// ||| System.IO.NotifyFilters.LastAccess
+        // ||| System.IO.NotifyFilters.CreationTime
+        // ||| System.IO.NotifyFilters.Security
+        )
+        path
+
+#!markdown
+
+### testEventsRaw (test)
+
+#!fsharp
+
+//// test
+
+let inline testEventsRaw
+    (watchFn : (_ -> bool) -> string -> FSharp.Control.AsyncSeq<int64 * FileSystemChange> * IDisposable)
+    write
+    =
+    let struct (tempDir, tempDisposable) =
+        "FileSystem.testEventsRaw"
+        |> SpiralCrypto.hash_text
+        |> SpiralFileSystem.create_temp_dir'
+    let stream, disposable = watchFn (fun _ -> true) tempDir
+
+    let events = System.Collections.Concurrent.ConcurrentBag ()
+
+    let inline iter () =
+        stream
+        |> FSharp.Control.AsyncSeq.iterAsyncParallel (fun event -> async { events.Add event })
+
+    let run = async {
+        let! _ = iter () |> Async.StartChild
+        do! Async.Sleep 250
+        return! write tempDir
+    }
+
+    try
+        run
+        |> Async.runWithTimeout 60000
+        |> _assertEqual (Some ())
+    finally
+        disposable.Dispose ()
+        tempDisposable.Dispose ()
+
+    let eventsLog =
+        events
+        |> Seq.toList
+        |> List.sortBy fst
+        |> List.fold
+            (fun (prev, acc) (ticks, event) ->
+                ticks, (ticks, (if prev = 0L then 0L else ticks - prev), event) :: acc
+            )
+            (0L, [])
+        |> snd
+        |> List.rev
+        |> List.map (fun (diff, n, event) -> $"{n} / {diff} / {event}" |> SpiralSm.ellipsis_end 100L)
+        |> SpiralSm.concat "\n"
+    let _locals () = $"eventsLog: \n{eventsLog} / {_locals ()}"
+    trace Debug (fun () -> "FileSystem.testEventsRaw") _locals
+
+    events
+    |> Seq.toList
+    |> List.sortBy fst
+    |> List.map snd
+    |> List.fold
+        (fun acc event ->
+            match acc, event with
+            | FileSystemChange.Changed (lastPath, Some lastContent) as lastEvent :: acc,
+                FileSystemChange.Changed (path, Some content)
+                when lastPath = path && content |> SpiralSm.starts_with lastContent
+                ->
+                event :: acc
+            | _ -> event :: acc
+        )
+        []
+    |> List.rev
+
+#!markdown
+
+#### fast (test)
+
+#!fsharp
+
+//// test
+
+let inline write path = async {
+    let n = 2
+
+    for i = 1 to n do
+        do! $"a{i}" |> SpiralFileSystem.write_all_text_async (path </> $"file{i}.txt")
+
+    do! Async.Sleep 250
+
+    for i = 1 to n do
+        do! $"b{i}" |> SpiralFileSystem.write_all_text_async (path </> $"file{i}.txt")
+
+    do! Async.Sleep 250
+
+    for i = 1 to n do
+        do! path </> $"file{i}.txt" |> SpiralFileSystem.move_file_async (path </> $"file_{i}.txt") |> Async.Ignore
+
+    do! Async.Sleep 250
+
+    for i = 1 to n do
+        do! $"c{i}" |> SpiralFileSystem.write_all_text_async (path </> $"file_{i}.txt")
+
+    do! Async.Sleep 250
+
+    for i = 1 to n do
+        do! SpiralFileSystem.delete_file_async (path </> $"file_{i}.txt") |> Async.Ignore
+
+    do! Async.Sleep 250
+}
+
+let inline run () =
+    let events = testEventsRaw watchDirectory write
+
+    events
+    |> _sequenceEqual [
+        FileSystemChange.Created ("file1.txt", Some "a1")
+        FileSystemChange.Changed ("file1.txt", Some "a1")
+        FileSystemChange.Created ("file2.txt", Some "a2")
+        FileSystemChange.Changed ("file2.txt", Some "a2")
+
+        FileSystemChange.Changed ("file1.txt", Some "b1")
+        FileSystemChange.Changed ("file2.txt", Some "b2")
+
+        FileSystemChange.Renamed ("file1.txt", ("file_1.txt", Some "b1"))
+        FileSystemChange.Renamed ("file2.txt", ("file_2.txt", Some "b2"))
+
+        FileSystemChange.Changed ("file_1.txt", Some "c1")
+        FileSystemChange.Changed ("file_2.txt", Some "c2")
+
+        FileSystemChange.Deleted "file_1.txt"
+        FileSystemChange.Deleted "file_2.txt"
+    ]
+
+run
+|> retry_fn 3
+|> _assertEqual (Some ())
+
+#!markdown
+
+#### slow (test)
+
+#!fsharp
+
+//// test
+
+let inline write path = async {
+    let n = 2
+
+    let contents =
+        [ 1 .. n ]
+        |> List.map (string >> String.replicate 1_000_000)
+
+    for i = 1 to n do
+        do! $"{contents.[i - 1]}a" |> SpiralFileSystem.write_all_text_async (path </> $"file{i}.txt")
+
+    do! Async.Sleep 1500
+
+    for i = 1 to n do
+        do! $"{contents.[i - 1]}b" |> SpiralFileSystem.write_all_text_async (path </> $"file{i}.txt")
+
+    do! Async.Sleep 1500
+
+    for i = 1 to n do
+        do! path </> $"file{i}.txt" |> SpiralFileSystem.move_file_async (path </> $"file_{i}.txt") |> Async.Ignore
+
+    do! Async.Sleep 1500
+
+    for i = 1 to n do
+        do! $"{contents.[i - 1]}c" |> SpiralFileSystem.write_all_text_async (path </> $"file_{i}.txt")
+
+    do! Async.Sleep 1500
+
+    for i = 1 to n do
+        do! SpiralFileSystem.delete_file_async (path </> $"file_{i}.txt") |> Async.Ignore
+
+    do! Async.Sleep 1500
+}
+
+let inline run () =
+    let events =
+        testEventsRaw watchDirectory write
+        |> List.map (function
+            | FileSystemChange.Changed (path, Some content) ->
+                FileSystemChange.Changed (path, content |> Seq.distinct |> Seq.map string |> SpiralSm.concat "" |> Some)
+            | FileSystemChange.Created (path, Some content) ->
+                FileSystemChange.Created (path, content |> Seq.distinct |> Seq.map string |> SpiralSm.concat "" |> Some)
+            | FileSystemChange.Renamed (oldPath, (newPath, Some content)) ->
+                FileSystemChange.Renamed (
+                    oldPath,
+                    (newPath, content |> Seq.distinct |> Seq.map string |> SpiralSm.concat "" |> Some)
+                )
+            | event -> event
+        )
+
+    events
+    |> _sequenceEqual [
+        FileSystemChange.Created ("file1.txt", Some "1a")
+        FileSystemChange.Changed ("file1.txt", Some "1a")
+        FileSystemChange.Created ("file2.txt", Some "2a")
+        FileSystemChange.Changed ("file2.txt", Some "2a")
+
+        FileSystemChange.Changed ("file1.txt", Some "1b")
+        FileSystemChange.Changed ("file2.txt", Some "2b")
+
+        FileSystemChange.Renamed ("file1.txt", ("file_1.txt", Some "1b"))
+        FileSystemChange.Renamed ("file2.txt", ("file_2.txt", Some "2b"))
+
+        FileSystemChange.Changed ("file_1.txt", Some "1c")
+        FileSystemChange.Changed ("file_2.txt", Some "2c")
+
+        FileSystemChange.Deleted "file_1.txt"
+        FileSystemChange.Deleted "file_2.txt"
+    ]
+
+run
+|> retry_fn 5
+|> _assertEqual (Some ())
+
+#!markdown
+
+### testEventsSorted (test)
+
+#!fsharp
+
+//// test
+
+let inline sortEvent event =
+    match event with
+    | FileSystemChange.Failure _ -> 0
+    | FileSystemChange.Created _ -> 1
+    | FileSystemChange.Changed _ -> 2
+    | FileSystemChange.Renamed (_oldPath, _) -> 3
+    | FileSystemChange.Deleted _ -> 4
+
+let inline formatEvents events =
+    events
+    |> Seq.toList
+    |> List.sortBy (snd >> sortEvent)
+    |> List.choose (fun (ticks, event) ->
+        match event with
+        | FileSystemChange.Failure _ ->
+            None
+        | FileSystemChange.Changed (path, _) ->
+            Some (ticks, System.IO.Path.GetFileName path, nameof FileSystemChangeType.Changed)
+        | FileSystemChange.Created (path, _) ->
+            Some (ticks, System.IO.Path.GetFileName path, nameof FileSystemChangeType.Created)
+        | FileSystemChange.Deleted path ->
+            Some (ticks, System.IO.Path.GetFileName path, nameof FileSystemChangeType.Deleted)
+        | FileSystemChange.Renamed (_oldPath, (path, _)) ->
+            Some (ticks, System.IO.Path.GetFileName path, nameof FileSystemChangeType.Renamed)
+    )
+    |> List.sortBy (fun (_, path, _) -> path)
+    |> List.distinctBy (fun (_, path, event) -> path, event)
+
+let inline testEventsSorted
+    (watchFn : string -> FSharp.Control.AsyncSeq<int64 * FileSystemChange> * IDisposable)
+    write
+    =
+    let struct (tempDir, tempDisposable) =
+        "FileSystem.testEventsSorted"
+        |> SpiralCrypto.hash_text
+        |> SpiralFileSystem.create_temp_dir'
+    let stream, disposable = watchFn tempDir
+
+    let events = System.Collections.Concurrent.ConcurrentBag ()
+
+    let inline iter () =
+        stream
+        |> FSharp.Control.AsyncSeq.iterAsyncParallel (fun event -> async { events.Add event })
+
+    let run = async {
+        let! _ = iter () |> Async.StartChild
+        do! Async.Sleep 250
+        return! write tempDir
+    }
+
+    try
+        run
+        |> Async.runWithTimeout 5000
+        |> _assertEqual (Some ())
+    finally
+        disposable.Dispose ()
+        tempDisposable.Dispose ()
+
+    let events = formatEvents events
+
+    let eventMap =
+        events
+        |> List.map (fun (ticks, path, event) -> path, (event, ticks))
+        |> List.groupBy fst
+        |> List.map (fun (path, events) ->
+            let event, _ticks =
+                events
+                |> List.map snd
+                |> List.sortByDescending snd
+                |> List.head
+
+            path, event
+        )
+        |> Map.ofList
+
+    let eventList =
+        events
+        |> List.map (fun (_ticks, path, event) -> path, event)
+
+    eventMap, eventList
+
+#!markdown
+
+#### create and delete (test)
+
+#!fsharp
+
+//// test
+
+let inline write path = async {
+    let n = 3
+
+    for i = 1 to n do
+        do! $"{i}" |> SpiralFileSystem.write_all_text_async (path </> $"file{i}.txt")
+
+    for i = 1 to n do
+        do! SpiralFileSystem.delete_file_async (path </> $"file{i}.txt") |> Async.Ignore
+
+    do! Async.Sleep 150
+}
+
+let inline run () =
+    let eventMap, eventList = testEventsSorted (watchDirectory (fun _ -> false)) write
+
+    [
+        "file1.txt", nameof FileSystemChangeType.Created
+        "file1.txt", nameof FileSystemChangeType.Changed
+        "file1.txt", nameof FileSystemChangeType.Deleted
+
+        "file2.txt", nameof FileSystemChangeType.Created
+        "file2.txt", nameof FileSystemChangeType.Changed
+        "file2.txt", nameof FileSystemChangeType.Deleted
+
+        "file3.txt", nameof FileSystemChangeType.Created
+        "file3.txt", nameof FileSystemChangeType.Changed
+        "file3.txt", nameof FileSystemChangeType.Deleted
+    ]
+    |> _sequenceEqual eventList
+
+    [
+        "file1.txt", nameof FileSystemChangeType.Deleted
+        "file2.txt", nameof FileSystemChangeType.Deleted
+        "file3.txt", nameof FileSystemChangeType.Deleted
+    ]
+    |> Map.ofList
+    |> _sequenceEqual eventMap
+
+run
+|> retry_fn 3
+|> _assertEqual (Some ())
+
+#!markdown
+
+#### change (test)
+
+#!fsharp
+
+//// test
+
+let inline write path = async {
+    let n = 2
+
+    for i = 1 to n do
+        do! $"{i}" |> SpiralFileSystem.write_all_text_async (path </> $"file{i}.txt")
+
+    for i = 1 to n do
+        do! "" |> SpiralFileSystem.write_all_text_async (path </> $"file{i}.txt")
+
+    for i = 1 to n do
+        do! SpiralFileSystem.delete_file_async (path </> $"file{i}.txt") |> Async.Ignore
+
+    do! Async.Sleep 150
+}
+
+let inline run () =
+    let eventMap, eventList = testEventsSorted (watchDirectory (fun _ -> false)) write
+
+    [
+        "file1.txt", nameof FileSystemChangeType.Created
+        "file1.txt", nameof FileSystemChangeType.Changed
+        "file1.txt", nameof FileSystemChangeType.Deleted
+
+        "file2.txt", nameof FileSystemChangeType.Created
+        "file2.txt", nameof FileSystemChangeType.Changed
+        "file2.txt", nameof FileSystemChangeType.Deleted
+    ]
+    |> _sequenceEqual eventList
+
+    [
+        "file1.txt", nameof FileSystemChangeType.Deleted
+        "file2.txt", nameof FileSystemChangeType.Deleted
+    ]
+    |> Map.ofList
+    |> _sequenceEqual eventMap
+
+run
+|> retry_fn 3
+|> _assertEqual (Some ())
+
+#!markdown
+
+#### rename (test)
+
+#!fsharp
+
+//// test
+
+let inline write path = async {
+    let n = 2
+
+    for i = 1 to n do
+        do! $"{i}" |> SpiralFileSystem.write_all_text_async (path </> $"file{i}.txt")
+
+    for i = 1 to n do
+        do! path </> $"file{i}.txt" |> SpiralFileSystem.move_file_async (path </> $"file_{i}.txt") |> Async.Ignore
+
+    for i = 1 to n do
+        do! SpiralFileSystem.delete_file_async (path </> $"file_{i}.txt") |> Async.Ignore
+
+    do! Async.Sleep 150
+}
+
+let inline run () =
+    let eventMap, eventList = testEventsSorted (watchDirectory (fun _ -> false)) write
+
+    [
+        "file1.txt", nameof FileSystemChangeType.Created
+        "file1.txt", nameof FileSystemChangeType.Changed
+        "file2.txt", nameof FileSystemChangeType.Created
+        "file2.txt", nameof FileSystemChangeType.Changed
+
+        "file_1.txt", nameof FileSystemChangeType.Renamed
+        "file_1.txt", nameof FileSystemChangeType.Deleted
+
+        "file_2.txt", nameof FileSystemChangeType.Renamed
+        "file_2.txt", nameof FileSystemChangeType.Deleted
+    ]
+    |> _sequenceEqual eventList
+
+    [
+        "file1.txt", nameof FileSystemChangeType.Changed
+        "file2.txt", nameof FileSystemChangeType.Changed
+        "file_1.txt", nameof FileSystemChangeType.Deleted
+        "file_2.txt", nameof FileSystemChangeType.Deleted
+    ]
+    |> Map.ofList
+    |> _sequenceEqual eventMap
+
+run
+|> retry_fn 3
+|> _assertEqual (Some ())
+
+#!markdown
+
+#### full (test)
+
+#!fsharp
+
+//// test
+
+let inline write path = async {
+    let n = 2
+
+    for i = 1 to n do
+        do! $"{i}" |> SpiralFileSystem.write_all_text_async (path </> $"file{i}.txt")
+
+    for i = 1 to n do
+        do! "" |> SpiralFileSystem.write_all_text_async (path </> $"file{i}.txt")
+
+    for i = 1 to n do
+        do! path </> $"file{i}.txt" |> SpiralFileSystem.move_file_async (path </> $"file_{i}.txt") |> Async.Ignore
+
+    for i = 1 to n do
+        do! $"{i}" |> SpiralFileSystem.write_all_text_async (path </> $"file_{i}.txt")
+
+    for i = 1 to n do
+        do! SpiralFileSystem.delete_file_async (path </> $"file_{i}.txt") |> Async.Ignore
+
+    do! Async.Sleep 150
+}
+
+let inline run () =
+    let eventMap, eventList = testEventsSorted (watchDirectory (fun _ -> false)) write
+
+    [
+        "file1.txt", nameof FileSystemChangeType.Created
+        "file1.txt", nameof FileSystemChangeType.Changed
+        "file2.txt", nameof FileSystemChangeType.Created
+        "file2.txt", nameof FileSystemChangeType.Changed
+
+        "file_1.txt", nameof FileSystemChangeType.Changed
+        "file_1.txt", nameof FileSystemChangeType.Renamed
+        "file_1.txt", nameof FileSystemChangeType.Deleted
+
+        "file_2.txt", nameof FileSystemChangeType.Changed
+        "file_2.txt", nameof FileSystemChangeType.Renamed
+        "file_2.txt", nameof FileSystemChangeType.Deleted
+    ]
+    |> _sequenceEqual eventList
+
+    [
+        "file1.txt", nameof FileSystemChangeType.Changed
+        "file2.txt", nameof FileSystemChangeType.Changed
+        "file_1.txt", nameof FileSystemChangeType.Deleted
+        "file_2.txt", nameof FileSystemChangeType.Deleted
+    ]
+    |> Map.ofList
+    |> _sequenceEqual eventMap
+
+run
+|> retry_fn 3
+|> _assertEqual (Some ())

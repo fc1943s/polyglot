@@ -1,0 +1,79 @@
+union color =
+    | Black
+    | Maroon
+    | Green
+    | Olive
+    | Navy
+    | Purple
+    | Teal
+    | Silver
+
+inl get_color_index = function
+    | Black => 0i32
+    | Maroon => 1
+    | Green => 2
+    | Olive => 3
+    | Navy => 4
+    | Purple => 5
+    | Teal => 6
+    | Silver => 7
+
+nominal _Color = $"Color"
+nominal _Style = $"Style"
+nominal _Rule = $"Rule"
+
+inl inspect ~obj : () =
+    $"printfn $\"%A{!obj}\""
+
+inl write_line ~obj : () =
+    $"System.Console.WriteLine !obj"
+
+inl new_color color : _Color =
+    get_color_index color |> $"Color.FromInt32"
+
+inl reset_colors () =
+    $"AnsiConsole.ResetColors ()"
+
+inl new_style color : _Style =
+    $"Style !color"
+
+inl new_rule text : _Rule =
+    $"Rule !text"
+
+inl style_rule style rule : _Rule =
+    $"!rule.RuleStyle !style"
+
+inl align_rule_left rule : _Rule =
+    $"!rule.LeftAligned ()"
+
+inl write arg =
+    $"AnsiConsole.Write !arg"
+
+// inl write_line arg =
+//     $"AnsiConsole.WriteLine !arg"
+
+inl write_rule_text rule_text color =
+    inl color_style = new_color color |> new_style
+
+    inl rule =
+        new_rule rule_text
+        |> align_rule_left
+        |> style_rule color_style
+
+    // reset_colors ()
+    write rule
+
+inl set_colors color =
+    inl color_obj = new_color color
+    $"AnsiConsole.Foreground <- !color_obj"
+    // $"AnsiConsole.Background <- AnsiConsole.Foreground.GetInvertedColor ()"
+
+inl write_line_color text color =
+    set_colors color
+    write_line text
+    reset_colors ()
+
+inl write_color text color =
+    set_colors color
+    write text
+    reset_colors ()
