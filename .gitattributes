@@ -1,6 +1,8 @@
 * text=auto eol=lf
 
 package-lock.json merge=ours
+bun.lockb merge=ours
+Cargo.lock merge=ours
 paket.lock merge=ours
 
 *.dib.ipynb linguist-generated

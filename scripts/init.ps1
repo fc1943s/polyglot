@@ -10,20 +10,8 @@ $ErrorActionPreference = "Stop"
 $ResolvedScriptDir = ResolveLink $ScriptDir
 $ResolvedScriptDir | Set-Location
 
-Write-Output "polyglot/scripts/init.ps1 / ScriptDir: $ScriptDir / ResolvedScriptDir: $ResolvedScriptDir"
 
-function Search-DotnetSdk($version) {
-    if (!(Search-Command "dotnet")) {
-        return $false
-    }
-    $sdks = & dotnet --list-sdks
-    foreach ($sdk in $sdks) {
-        if ($sdk.StartsWith($version)) {
-            return $true
-        }
-    }
-    return $false
-}
+Write-Output "polyglot/scripts/init.ps1 / ScriptDir: $ScriptDir / ResolvedScriptDir: $ResolvedScriptDir"
 
 if (!(Search-Command "rustup")) {
     if ($IsWindows) {
@@ -80,8 +68,11 @@ if (!(Search-Command "nix")) {
         if (-not ($distributions -like "Ubuntu")) {
             wsl --install Ubuntu --no-launch
         }
+    }
 
-        { sudo sh init.sh } | Invoke-Block -Linux -OnError Continue
+    { sudo sh init.sh } | Invoke-Block -Linux -OnError Continue
+
+    if ($IsWindows) {
         { pwsh init.ps1 -init 1 } | Invoke-Block -Linux
     }
 

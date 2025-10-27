@@ -125,6 +125,10 @@ function Invoke-Block {
         }
     }
 
+    if ($env:CI -and $IsLinux) {
+        df -h
+    }
+
     if ($Return) {
         return $result
     }
@@ -327,4 +331,17 @@ function Invoke-Dib {
     (Get-Content "$path.html" -Raw) `
         -replace '(id="cell\-id=)[a-fA-F0-9]{8}', { $_.Groups[1].Value + $counter++ } `
     | Set-Content "$path.html"
+}
+
+function Search-DotnetSdk($version) {
+    if (!(Search-Command "dotnet")) {
+        return $false
+    }
+    $sdks = & dotnet --list-sdks
+    foreach ($sdk in $sdks) {
+        if ($sdk.StartsWith($version)) {
+            return $true
+        }
+    }
+    return $false
 }

@@ -5,6 +5,8 @@ USER root
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive && apt-get -y install --no-install-recommends \
     powershell
 
+RUN df -h
+
 USER codespace
 
 COPY scripts/core.ps1 /usr/local/bin/core.ps1
