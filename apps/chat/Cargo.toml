@@ -1,0 +1,22 @@
+cargo-features = ["profile-rustflags"]
+
+[workspace]
+resolver = "2"
+members = [
+    "contract",
+    "contract/tests",
+]
+
+[workspace.package]
+version = "0.0.1"
+license-file = "../../LICENSE"
+repository = "https://github.com/i574n/polyglot"
+
+[profile.release]
+codegen-units = 1
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"
+overflow-checks = true
+rustflags = ["-C", "link-arg=-s"]

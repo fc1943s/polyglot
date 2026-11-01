@@ -1,0 +1,16 @@
+{
+  "name": "ipfs",
+  "type": "module",
+  "scripts": {
+    "outdated-pre": "npm-check-updates --target greatest",
+    "start": "~/.bun/bin/bun index.ts"
+  },
+  "dependencies": {
+    "nft.storage": "~7.2"
+  },
+  "devDependencies": {
+    "@types/node": "~22.10",
+    "npm-check-updates": "~17.1.14",
+    "typescript": "next"
+  }
+}

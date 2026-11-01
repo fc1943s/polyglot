@@ -1,0 +1,561 @@
+/// # math
+:< testing
+:< rust.rust_operators
+:< rust
+
+/// ## complex
+:! complex t = $'num_complex::Complex<`t>'
+
+:= complex \* t. ((re : t), (im : t)) : complex t =
+    !\\((re, im), $'"num_complex::Complex::new($0, $1)"')
+
+///> rust -d num-complex
+test complex =
+    complex (0f64, 0f64)
+    |> sm'.format'
+    |> sm'.from_std_string
+    |> _assert_eq "0+0i"
+
+/// ## re
+:= re \* t. (c : complex t) : t =
+    !\\(c, $'"$0.re"')
+
+/// ## im
+:= im \* t. (c : complex t) : t =
+    !\\(c, $'"$0.im"')
+
+/// ## complex_unbox
+:= complex_unbox \* t. (c : complex t) =
+    re c, im c
+
+/// ## (~.^)
+:= (~.^) c = complex c
+
+/// ## complex_eq
+:= complex_eq \* t. (a : complex t) (b : complex t) : bool =
+    !\\((a, b), $'"$0 == $1"')
+
+/// ## (.=)
+:= (.=) a b = complex_eq a b
+
+/// ## equable complex
+:+ equable complex t = complex_eq
+
+/// ## complex_add
+:= complex_add \* t. (a : complex t) (b : complex t) : complex t =
+    !\\((a, b), $'"$0 + $1"')
+
+/// ## (.+)
+:= (.+) a b = complex_add a b
+
+/// ## complex_sub
+:= complex_sub \* t. (a : complex t) (b : complex t) : complex t =
+    !\\((a, b), $'"$0 - $1"')
+
+/// ## (.-)
+:= (.-) a b = complex_sub a b
+
+/// ## complex_mult
+:= complex_mult \* t. (a : complex t) (b : complex t) : complex t =
+    !\\((a, b), $'"$0 * $1"')
+
+/// ## (.*)
+:= (.*) a b = complex_mult a b
+
+/// ## complex_div
+:= complex_div \* t. (a : complex t) (b : complex t) : complex t =
+    !\\((a, b), $'"$0 / $1"')
+
+/// ## (./)
+:= (./) a b = complex_div a b
+
+/// ## powc
+:= powc \* t. (s : complex t) (c : complex t) : complex t =
+    !\\((c, s), $'"num_complex::Complex::powc($0, $1)"')
+
+/// ## (.**)
+:= (.**) a b = powc b a
+
+/// ## complex_sin
+:= complex_sin \* t. (c : complex t) : complex t =
+    !\\(c, $'"$0.sin()"')
+
+/// ## conj
+:= conj \* t. (c : complex t) : complex t =
+    !\\(c, $'"$0.conj()"')
+
+/// ## zeta
+:= zeta log (gamma : complex f64 -> complex f64) (s : complex f64) : complex f64 =
+    := ^ zeta \* t {number}.
+        (count : t)
+        (gamma : complex f64 -> complex f64)
+        (s : complex f64)
+        : complex f64
+        =
+        ? log ?>
+            !\\((count, s), $'"println\!(\\\"zeta / count: {:?} / s: {:?}\\\", $0, $1)"')
+        ? re s > 1 ?>
+            (.^(0, 0), (arraym.init 10000i32 id : array _))
+            ||> arraym.fold \ acc n =>
+                acc .+ (.^(1, 0) ./ (.^(n |> convert.f64, 0) .** s))
+        |:
+            := gamma_term = gamma (.^(1, 0) .- s)
+            := sin_term = .^(pi, 0) .* s ./ .^(2, 0) |> complex_sin
+            := one_minus_s = .^(1 - re s, -(im s))
+            := mirror_term =
+                ? re one_minus_s <= 1
+                ?> .^(0, 0)
+                |:
+                    ? count <= 3
+                    ?> zeta (count + 1) gamma one_minus_s
+                    |: one_minus_s
+            := reflection_formula =
+                .^(2, 0) .* (.^(pi, 0) .** s) .* sin_term .* gamma_term .* mirror_term
+            reflection_formula
+    ~~ zeta 0i32 gamma s
+
+/// ## bound
+:! bound t = $'pyo3::Bound<`t>'
+
+/// ## python
+:! python = $'pyo3::Python'
+
+/// ## pymodule
+:! pymodule = $'pyo3::types::PyModule'
+
+/// ## pyany
+:! pyany = $'pyo3::PyAny'
+
+/// ## pyerr
+:! pyerr = $'pyo3::PyErr'
+
+/// ## eval
+:= module_from_code (py : python) (code : string) : _ (bound pymodule) _ =
+    := py = ~~ py
+    := code = code |> sm'.to_std_string |> sm'.new_c_string
+    := empty = "" |> sm'.to_std_string |> sm'.new_c_string
+    !\\(code, $'"pyo3::types::PyModule::from_code(!py, &$0, &!empty, &!empty)"')
+    |> resultm.map_error'' \ (x : pyerr) => x |> sm'.format'
+
+:= use_pyanymethods () =
+    global "use pyo3::prelude::PyAnyMethods;"
+
+:= getattr (attr : string) (module : bound pymodule) : _ (bound pyany) _ =
+    := attr = ~~ attr
+    := attr = attr |> sm'.as_str
+    := module = ~~ module
+    use_pyanymethods ()
+    !\\(attr, $'"!module.getattr($0)"')
+    |> resultm.map_error'' \ (x : pyerr) => x |> sm'.format'
+
+:= call \* t. (args : t) (module : bound pyany) : _ (bound pyany) _ =
+    := args = ~~ args
+    := module = ~~ module
+    := result : resultm.result' (bound pyany) pyerr =
+        !\($'"pyo3::prelude::PyAnyMethods::call(&!module, !args, None)"') : resultm.result' (bound pyany) pyerr
+    result
+    |> resultm.map_error'' \ (x : pyerr) => x |> sm'.format'
+
+:= extract \* t. (result : bound pyany) : _ t _ =
+    := result = ~~ result
+    use_pyanymethods ()
+    !\($'"!result.extract()"')
+    |> resultm.map_error'' \ (x : pyerr) => x |> sm'.format'
+
+:= eval py code (args : pair bool (pair f64 f64)) : _ (_ f64) sm'.std_string =
+    := code =
+        code
+        |> module_from_code py
+        |> resultm.unwrap'
+    := fn =
+        code
+        |> getattr "fn"
+        |> resultm.unwrap'
+
+    fn
+    |> call args
+    |> resultm.try'
+    |> extract
+    |> resultm.try'
+    |> complex
+    |> Ok
+    |> resultm.box
+
+:= call1_ log py s (code : string) =
+    := code = ~~ code
+
+    := s = new_pair (re s) (im s)
+    := args = new_pair log s
+
+    eval py code args
+
+:= call1_ log name py s line =
+    := s = ~~ s
+    ~~
+        ;[
+            "import sys"
+            "import traceback"
+            "import re"
+            "count = 0"
+            "memory_address_pattern = re.compile(r' at 0x[0-9a-fA-F]+')"
+            "def trace_calls(frame, event, arg):"
+            "    global count"
+            "    count += 1"
+            "    if count < 200:"
+            "        try:"
+            "            args = { k: v for k, v in frame.f_locals.items() if frame.f_code.co_name != 'make_mpc' "
+            ^^ "and k not in ['ctx'] and not callable(v) }"
+            "            args_str = ', '.join([ f\"{k}={re.sub(memory_address_pattern, ' at 0x<?>', repr(v))}\" "
+            ^^ "for k, v in args.items() ])"
+            "            print(f\"{event}(__NAME__) / f_code.co_name: {frame.f_code.co_name} / f_locals: "
+            ^^ "{args_str} / f_lineno: {frame.f_lineno} / f_code.co_filename: "
+            ^^ "{frame.f_code.co_filename.split('site-packages')[-1]} / f_back.f_lineno: { '' if frame.f_back is None "
+            ^^ "else frame.f_back.f_lineno } / f_back.f_code.co_filename: { '' if frame.f_back is None else "
+            ^^ "frame.f_back.f_code.co_filename.split('site-packages')[-1] } / arg: {re.sub(memory_address_pattern, ' "
+            ^^ "at 0x<?>', repr(arg))}\", flush=True)"
+            "        except ValueError as e:"
+            "            print(f'__NAME__ / e: {e}', flush=True)"
+            "        return trace_calls"
+            "import mpmath"
+            "def fn(log, s):"
+            "    global count"
+            "    if log:"
+            "        print(f'__NAME__ / s: {s} / count: {count}', flush=True)"
+            "    s = complex(*s)"
+            "    try:"
+            "        if log: sys.settrace(trace_calls)"
+            line
+            "        if log:"
+            "            sys.settrace(None)"
+            "            print(f'__NAME__ / result: {s} / count: {count}', flush=True)"
+            "    except ValueError as e:"
+            "        if s.real == 1:"
+            "            s = complex(float('inf'), 0)"
+            "    return (s.real, s.imag)"
+        ]
+        |> \ (lines : array _) => lines |> sm'.concat_array "\n" |> sm'.replace "__NAME__" name
+        |> call1_ log py s
+
+:= gamma_ log py s =
+    call1_ log "gamma_" py s "        s = mpmath.gamma(s)"
+
+:= zeta_ log py s =
+    call1_ log "zeta_" py s "        s = mpmath.zeta(s)"
+
+/// ## run_test
+:= run_test log (fn : (complex f64 -> complex f64) * (complex f64 -> complex f64) -> ()) =
+    := fn_ (py : python) : resultm.result' () pyerr =
+        := nan () =
+            !\($'"f64::NAN"')
+        := gamma__ = \ (s : complex f64) =>
+            := result = gamma_ log py s
+            ? log ?>
+                := s = ~~ s
+                !\($'"println\!(\\\"gamma__ / s: {:?} / result: {:?}\\\", !s, !result)"')
+            result |> resultm.ok' |> optionm'.unbox |> optionm'.default_value .^(nan (), nan ())
+        := zeta__ = \ (s : complex f64) =>
+            := result = zeta_ log py s
+
+            := z = zeta !+ gamma__ s
+
+            ? log ?>
+                := s = ~~ s
+                !\($'"println\!(\\\"zeta__ / s: {:?} / result: {:?} / z: {:?}\\\", !s, !result, !z)"')
+
+
+
+            result |> resultm.ok' |> optionm'.unbox |> optionm'.default_value .^(nan (), nan ())
+        ~~ fn (zeta__, gamma__)
+
+        Ok ()
+        |> resultm.box
+
+    ~~
+        !\($'"pyo3::Python::initialize()"') : ()
+
+        !\($'"let __run_test = pyo3::Python::attach(|py| -> pyo3::PyResult<()> { //"')
+
+        :~ x' = fn_ (!\($'"py"') : python)
+        := x' : resultm.result' () pyerr = x'
+
+        := closure_fix = 2u8, 1u8
+        x' |> rust.fix_closure closure_fix
+
+        (!\($'"__run_test"') : _ () pyerr)
+        |> resultm.unwrap'
+
+/// ## test_zeta_at_known_values_
+:= test_zeta_at_known_values_ log = run_test log \ zeta, gamma =>
+    ;[
+        .^(2, 0), pi ** 2 / 6
+        .^(-1, 0), -1 / 12
+    ]
+    |> \ (x : array _) => x
+    |> arraym.iter \ s, e =>
+        := result = zeta s
+
+        result |> im |> _assert_eq 0
+        re result - e |> abs |> _assert_lt 0.0001
+
+///> rust -d num-complex pyo3='=0.26.0'
+test test_zeta_at_known_values =
+    test_zeta_at_known_values_ !+
+
+/// ## test_zeta_at_2_minus2
+:= test_zeta_at_2_minus2 log = run_test log \ zeta, gamma =>
+    := s = .^(2, -2)
+    := result = zeta s
+
+    (re result - 0.8673) |> abs |> _assert_lt 0.001
+    (im result - 0.2750) |> abs |> _assert_lt 0.001
+
+///> rust -d num-complex pyo3='=0.26.0'
+test test_zeta_at_2_minus2 =
+    test_zeta_at_2_minus2 !+
+
+/// ## test_trivial_zero_at_negative_even___
+:= test_trivial_zero_at_negative_even___ log = run_test log \ zeta, gamma =>
+    (~~ listm'.init_series -2f64 -40 -2)
+    |> listm.iter \ n =>
+        := s = .^(n, 0)
+        := result = zeta s
+
+        result |> re |> _assert_eq 0
+        result |> im |> _assert_eq 0
+
+///> rust -d num-complex pyo3='=0.26.0'
+test test_trivial_zero_at_negative_even =
+    test_trivial_zero_at_negative_even___ !+
+
+/// ## test_non_trivial_zero___
+:= test_non_trivial_zero___ log = run_test log \ zeta, gamma =>
+    ;[
+        .^(0.5, 14.134725)
+        .^(0.5, 21.022040)
+        .^(0.5, 25.010857)
+        .^(0.5, 30.424876)
+        .^(0.5, 32.935062)
+        .^(0.5, 37.586178)
+    ]
+    |> \ (x : array _) => x
+    |> arraym.iter \ x =>
+            := result = zeta x
+            result |> re |> abs |> _assert_lt 0.0001
+            result |> im |> abs |> _assert_lt 0.0001
+
+///> rust -d num-complex pyo3='=0.26.0'
+test test_non_trivial_zero =
+    test_non_trivial_zero___ !+
+
+/// ## test_real_part_greater_than_one___
+:= test_real_part_greater_than_one___ log = run_test log \ zeta, gamma =>
+    := points = ;[ 2; 3; 4; 5; 10; 20; 50 ]
+    (points : array _)
+    |> arraym.iter \ point =>
+        := s = .^(point, 0)
+        := result = zeta s
+        result |> re |> _assert_gt 0
+        result |> im |> _assert_eq 0
+
+///> rust -d num-complex pyo3='=0.26.0'
+test test_real_part_greater_than_one =
+    test_real_part_greater_than_one___ !+
+
+/// ## test_zeta_at_1___
+:= test_zeta_at_1___ log = run_test log \ zeta, gamma =>
+    := s = .^(1, 0)
+    := result = zeta s
+    result |> re |> _assert_eq limit.max
+    result |> im |> _assert_eq 0
+
+///> rust -d num-complex pyo3='=0.26.0'
+test test_zeta_at_1 =
+    test_zeta_at_1___ !+
+
+/// ## test_symmetry_across_real_axis___
+:= test_symmetry_across_real_axis___ log = run_test log \ zeta, gamma =>
+    := s = .^(2, 10)
+    := result_positive_im = zeta s
+    := result_negative_im = zeta .^(re s, -(im s))
+    := conj = result_negative_im |> conj
+    result_positive_im |> re |> _assert_eq (conj |> re)
+    result_positive_im |> im |> _assert_eq (conj |> im)
+
+///> rust -d num-complex pyo3='=0.26.0'
+test test_symmetry_across_real_axis =
+    test_symmetry_across_real_axis___ !+
+
+/// ## test_behavior_near_origin___
+:= test_behavior_near_origin___ log = run_test log \ zeta, gamma =>
+    := s = .^(0.01, 0.01)
+    := result = zeta s
+    result |> re |> _assert_lt limit.max
+    result |> im |> _assert_lt limit.max
+
+///> rust -d num-complex pyo3='=0.26.0'
+test test_behavior_near_origin =
+    test_behavior_near_origin___ !+
+
+/// ## test_imaginary_axis
+:= test_imaginary_axis log = run_test log \ zeta, gamma =>
+    (~~ [ 10; 20; 30; 40; 50; 60; 70; 80; 90; 100 ])
+    |> listm.iter \ s =>
+        := s = .^(0, s)
+        := result = zeta s
+        result |> re |> _assert_ne 0
+        result |> im |> _assert_ne 0
+
+///> rust -d num-complex pyo3='=0.26.0'
+test test_imaginary_axis =
+    test_imaginary_axis !+
+
+/// ## test_critical_strip
+:= test_critical_strip log = run_test log \ zeta, gamma =>
+    (~~ [
+        .^(0.5, 14.134725)
+        .^(0.75, 20.5)
+        .^(1.25, 30.1)
+        .^(0.25, 40.0)
+        .^(1.0, 50.0)
+    ])
+    |> listm.iter \ s =>
+        := result = zeta s
+        result |> re |> _assert_ne 0
+        result |> im |> _assert_ne 0
+
+///> rust -d num-complex pyo3='=0.26.0'
+test test_critical_strip =
+    test_critical_strip !+
+
+/// ## test_reflection_formula_for_specific_value
+:= test_reflection_formula_for_specific_value log = run_test log \ zeta, gamma =>
+    (~~ [
+        .^(3, 4)
+        .^(2.5, -3.5)
+        .^(1.5, 2.5)
+        .^(0.5, 14.134725)
+    ])
+    |> listm.iter \ s =>
+        := lhs = zeta s
+        := reflection_coefficient =
+            (.^(2, 0) .** s)
+            .* (.^(pi, 0) .** (s .- .^(1, 0)))
+            .* (.^(pi, 0) .* s ./ .^(2, 0) |> complex_sin)
+            .* gamma (.^(1, 0) .- s)
+
+        := one_minus_s = .^(1 - re s, -(im s))
+        := rhs = reflection_coefficient .* zeta one_minus_s
+
+        re lhs - re rhs |> abs |> _assert_lt 0.0001
+        im lhs - im rhs |> abs |> _assert_lt 0.0001
+
+///> rust -d num-complex pyo3='=0.26.0'
+test test_reflection_formula_for_specific_value =
+    test_reflection_formula_for_specific_value !+
+
+/// ## test_euler_product_formula
+:= test_euler_product_formula log = run_test log \ zeta, gamma =>
+    := s_values = ~~ [ 2; 2.5; 3; 3.5; 4; 4.5; 5 ]
+    := primes = ~~ [ 2; 3; 5; 7; 11; 13; 17; 19; 23; 29; 31; 37; 41; 43; 47; 53; 59; 61; 67; 71 ]
+    s_values
+    |> listm.iter \ s_re =>
+        := s = .^(s_re, 0)
+        := product =
+            (1, primes)
+            ||> listm.fold \ acc x =>
+                acc * 1 / (1 - x ** -s_re)
+
+        := result = zeta s
+        re result - product |> abs |> _assert_lt 0.01
+        result |> im |> _assert_lt 0.01
+
+///> rust -d num-complex pyo3='=0.26.0'
+test test_euler_product_formula =
+    test_euler_product_formula !+
+
+/// ## graph
+
+/// ## tests
+:= tests () =
+    testing.run_tests_log {
+        test_zeta_at_known_values_
+        test_zeta_at_2_minus2
+        test_trivial_zero_at_negative_even___
+        test_non_trivial_zero___
+        test_real_part_greater_than_one___
+        test_zeta_at_1___
+        test_symmetry_across_real_axis___
+        test_behavior_near_origin___
+        test_imaginary_axis
+        test_critical_strip
+        test_reflection_formula_for_specific_value
+        test_euler_product_formula
+    }
+
+///> _
+
+:= run_main (_args : array_base string) : i32 =
+    := value = 1i32
+    console.write_line (sm'.(++#) "value: " (value |> sm'.obj_to_string))
+    0i32
+
+:= run_native_tests (name : string) : i32 =
+    := name = ~~ name
+    := run (test_name : string) (fn : bool -> ()) (found : bool) : bool =
+        ? name = "" || name = test_name ?>
+            fn !-
+            !+
+        |: found
+    := found =
+        !-
+        |> run "test_zeta_at_known_values_" test_zeta_at_known_values_
+        |> run "test_zeta_at_2_minus2" test_zeta_at_2_minus2
+        |> run "test_trivial_zero_at_negative_even___" test_trivial_zero_at_negative_even___
+        |> run "test_non_trivial_zero___" test_non_trivial_zero___
+        |> run "test_real_part_greater_than_one___" test_real_part_greater_than_one___
+        |> run "test_zeta_at_1___" test_zeta_at_1___
+        |> run "test_symmetry_across_real_axis___" test_symmetry_across_real_axis___
+        |> run "test_behavior_near_origin___" test_behavior_near_origin___
+        |> run "test_imaginary_axis" test_imaginary_axis
+        |> run "test_critical_strip" test_critical_strip
+        |> run "test_reflection_formula_for_specific_value" test_reflection_formula_for_specific_value
+        |> run "test_euler_product_formula" test_euler_product_formula
+    ? found ?> 0i32
+    |:
+        console.write_line (sm'.(++#) "unknown test: " name)
+        1i32
+
+:= native_test_wrappers () =
+    global (
+        "thread_local! { static SPIRAL_TEST_NAME: std::cell::RefCell<Option<std::rc::Rc<str>>> = const { "
+        ^^ "std::cell::RefCell::new(None) }; }"
+    )
+    global """
+        #[cfg(test)]
+        fn spiral_test(name: &'static str) {
+            let code = std::thread::Builder::new().stack_size(1 << 30).spawn(move || { SPIRAL_TEST_NAME.with(|x| *x.borrow_mut() = Some(std::rc::Rc::from(name))); spiral_main() }).unwrap().join().unwrap();
+            assert_eq!(code, 0);
+        }
+        """
+    global """
+        #[cfg(test)]
+        mod spiral_tests {
+            macro_rules! tests { ($($name:ident),*) => { $(#[test] fn $name() { super::spiral_test(stringify!($name)) })* } }
+            tests!(test_zeta_at_known_values_, test_zeta_at_2_minus2, test_trivial_zero_at_negative_even___, test_non_trivial_zero___, test_real_part_greater_than_one___, test_zeta_at_1___, test_symmetry_across_real_axis___, test_behavior_near_origin___, test_imaginary_axis, test_critical_strip, test_reflection_formula_for_specific_value, test_euler_product_formula);
+        }
+        """
+
+:= first_argument () : string =
+    ?= env.try_command_line_argument 0i32 ?|
+    | Some argument => argument
+    | None => ""
+
+:= test_name_or_first_argument () : string =
+    ?= ($'SPIRAL_TEST_NAME.with(|x| x.borrow().clone())' : optionm'.option' string) |> optionm'.unbox ?|
+    | Some name => name
+    | None => first_argument ()
+
+:= main () : () =
+    native_test_wrappers ()
+    := code = run_native_tests (test_name_or_first_argument ())
+    ? code <> 0 ?> env.exit_with code

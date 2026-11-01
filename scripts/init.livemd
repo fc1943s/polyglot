@@ -1,0 +1,118 @@
+<!-- livebook:{"spiral_code":"pwsh"} -->
+
+```pwsh
+. ./nbs_header.ps1
+. ./core.ps1
+```
+
+<!-- livebook:{"spiral_code":"pwsh"} -->
+
+```pwsh
+
+```
+
+<!-- livebook:{"spiral_code":"pwsh"} -->
+
+```pwsh
+
+```
+
+<!-- livebook:{"spiral_code":"pwsh"} -->
+
+```pwsh
+
+```
+
+<!-- livebook:{"spiral_code":"pwsh"} -->
+
+```pwsh
+if (!(Search-Command "cargo-binstall")) {
+    if ($IsWindows) {
+        Set-ExecutionPolicy Unrestricted -Scope Process; iex (iwr "https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.ps1").Content
+    } else {
+        curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+    }
+}
+```
+
+
+<!-- livebook:{"spiral_code":"pwsh"} -->
+
+```pwsh
+if (!(Search-Command "sccache")) {
+    { cargo binstall -y sccache } | Invoke-Block -OnError Continue
+}
+```
+
+<!-- livebook:{"spiral_code":"pwsh"} -->
+
+```pwsh
+if (!(Search-Command "wasm-pack")) {
+    { cargo binstall -y wasm-pack } | Invoke-Block -OnError Continue
+}
+```
+
+<!-- livebook:{"spiral_code":"pwsh"} -->
+
+```pwsh
+if (!(Search-Command "trunk")) {
+    { cargo binstall -y trunk --version 0.21.14 } | Invoke-Block -OnError Continue
+}
+```
+
+<!-- livebook:{"spiral_code":"pwsh"} -->
+
+```pwsh
+if (!(Search-Command "nix")) {
+    { . $(Search-Command bunx) --bun playwright@1.64.1 install } | Invoke-Block -OnError Continue
+}
+```
+
+<!-- livebook:{"spiral_code":"pwsh"} -->
+
+```pwsh
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+```
+
+<!-- livebook:{"spiral_code":"pwsh"} -->
+
+```pwsh
+{ Install-Module -Name PowerShellGet -Force -AllowClobber -Scope CurrentUser } | Invoke-Block -OnError Continue
+```
+
+<!-- livebook:{"spiral_code":"pwsh"} -->
+
+```pwsh
+{ if ((Get-PSRepository -Name PSGallery).InstallationPolicy -ne 'Trusted') { Set-PSRepository -Name PSGallery -InstallationPolicy Trusted } } | Invoke-Block -OnError Continue
+```
+
+<!-- livebook:{"spiral_code":"pwsh"} -->
+
+```pwsh
+{ . $(Search-Command bun) install --cwd .. --frozen-lockfile } | Invoke-Block
+```
+
+<!-- livebook:{"spiral_code":"pwsh"} -->
+
+```pwsh
+{ . "$ScriptDir/dep_spiral.ps1" } | Invoke-Block
+```
+<!-- livebook:{"spiral_code":"pwsh"} -->
+
+```pwsh
+{ . "$ScriptDir/../deps/spiral/scripts/patched-crates/install.ps1" cargo-outdated } | Invoke-Block -OnError Continue
+```
+
+<!-- livebook:{"spiral_code":"pwsh"} -->
+
+```pwsh
+{ . "$ScriptDir/dep_spiral_extension.ps1" } | Invoke-Block -OnError Continue
+```
+
+<!-- livebook:{"spiral_code":"pwsh"} -->
+
+```pwsh
+if (!(Test-Path ../deps/hyperui/public/component.css)) {
+    { . "$ScriptDir/dep_hyperui.ps1" } | Invoke-Block
+}
+```

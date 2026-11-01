@@ -1,0 +1,33 @@
+# CommonFSharp (Polyglot)
+
+<!-- livebook:{"break_markdown":true} -->
+
+`#!import ../../lib/fsharp/Notebooks.livemd`
+
+<!-- livebook:{"break_markdown":true} -->
+
+`#!import ../../lib/fsharp/Testing.livemd`
+
+<!-- livebook:{"break_markdown":true} -->
+
+`#!import ../../lib/fsharp/Common.fs`
+
+```fsharp
+open Common
+```
+
+## getUnionCaseName
+
+```fsharp
+let inline getUnionCaseName<'T> (x: 'T) =
+    match Reflection.FSharpValue.GetUnionFields(x, typeof<'T>) with
+    | case, _ -> case.Name
+```
+
+```fsharp
+///- --test
+
+TraceLevel.Critical
+|> getUnionCaseName
+|> _assertEqual (nameof TraceLevel.Critical)
+```

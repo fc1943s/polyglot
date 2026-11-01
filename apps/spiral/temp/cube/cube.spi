@@ -1,0 +1,128 @@
+/// # cube
+/// Spinning ASCII cubes: three cubes rotated in 3D and projected through a z-buffer into a 160 x 44 character
+/// frame (the classic rotating-cube demo). Core-only Spiral: loops, mutable cells, arrays and float math run on every
+/// backend; the only effect is printing (the portable `!!!!Printf`). A run renders `frames` frames, each preceded
+/// by ESC[H (cursor home, so a terminal redraws in place), then prints a checksum of all frames.
+/// ## cube
+/// ### rotation
+:! rotation =
+    {
+        a : f64
+        b : f64
+        c : f64
+    }
+
+/// ### settings
+:= width () = 160i32
+:= height () = 44i32
+:= distance_from_cam () = 100f64
+:= k1 () = 40f64
+:= increment_speed () = 0.6f64
+:= background () = 46i32
+
+/// ### math
+:= sin64 (x : f64) : f64 = !!!!Sin(x)
+:= cos64 (x : f64) : f64 = !!!!Cos(x)
+:= to_i32 (x : f64) : i32 = !!!!Conv(`i32, x)
+:= to_f64 (x : i32) : f64 = !!!!Conv(`f64, x)
+
+/// ### calculate_x
+:= calculate_x (i : f64) (j : f64) (k : f64) (rotation rot) : f64 =
+    := a, b, c = rot.a, rot.b, rot.c
+    j * sin64 a * sin64 b * cos64 c - k * cos64 a * sin64 b * cos64 c +
+    j * cos64 a * sin64 c + k * sin64 a * sin64 c + i * cos64 b * cos64 c
+
+/// ### calculate_y
+:= calculate_y (i : f64) (j : f64) (k : f64) (rotation rot) : f64 =
+    := a, b, c = rot.a, rot.b, rot.c
+    j * cos64 a * cos64 c + k * sin64 a * cos64 c -
+    j * sin64 a * sin64 b * sin64 c + k * cos64 a * sin64 b * sin64 c -
+    i * cos64 b * sin64 c
+
+/// ### calculate_z
+:= calculate_z (i : f64) (j : f64) (k : f64) (rotation rot) : f64 =
+    := a, b = rot.a, rot.b
+    k * cos64 a * cos64 b - j * sin64 a * cos64 b + i * sin64 b
+
+/// ### plot
+/// Projects one surface point; the z-buffer keeps the nearest one (the largest 1/z) per cell, the first on ties.
+:~ plot
+    (depth : array f64) (chars : array i32) (rot : rotation) (offset : f64) (i : f64) (j : f64) (k : f64) (ch : i32)
+    : ()
+    =
+    := x = calculate_x i j k rot
+    := y = calculate_y i j k rot
+    := z = calculate_z i j k rot + distance_from_cam ()
+    := ooz = 1f64 / z
+    := xp = to_i32 (to_f64 (width ()) / 2f64 + offset + k1 () * ooz * x * 2f64)
+    := yp = to_i32 (to_f64 (height ()) / 2f64 + k1 () * ooz * y)
+    := idx = xp + yp * width ()
+    ? idx >= 0i32 && idx < width () * height () ?>
+        ? ooz > index depth idx ?>
+            set depth idx ooz
+            set chars idx ch
+
+/// ### draw_cube
+:~ draw_cube (depth : array f64) (chars : array i32) (rot : rotation) (cw : f64) (offset : f64) : () =
+    := plot = plot depth chars rot offset
+    := cube_x = mut (0f64 - cw)
+    loop.while' (\ () => *cube_x < cw) \ () =>
+        := cube_y = mut (0f64 - cw)
+        loop.while' (\ () => *cube_y < cw) \ () =>
+            := x, y = *cube_x, *cube_y
+            plot x y (0f64 - cw) 59i32
+            plot cw y x 92i32
+            plot (0f64 - cw) y (0f64 - x) 47i32
+            plot (0f64 - x) y cw 61i32
+            plot x (0f64 - cw) (0f64 - y) 62i32
+            plot x cw y 60i32
+            cube_y <- *cube_y + increment_speed ()
+        cube_x <- *cube_x + increment_speed ()
+
+/// ### cell_text
+:= cell_text (ch : i32) : string =
+    ? ch = 59i32 ?> ";"
+    |? ch = 92i32 ?> "\\"
+    |? ch = 47i32 ?> "/"
+    |? ch = 61i32 ?> "="
+    |? ch = 62i32 ?> ">"
+    |? ch = 60i32 ?> "<"
+    |: "."
+
+/// ### render
+/// Clears the buffers, draws the three cubes, prints the frame row by row and returns the updated checksum.
+:~ render (depth : array f64) (chars : array i32) (rot : rotation) (checksum : i32) : i32 =
+    := size = width () * height ()
+    loop.for' { from = 0i32; nearTo = size } \ i =>
+        set depth i 0f64
+        set chars i (background ())
+    draw_cube depth chars rot 20f64 (0f64 - 40f64)
+    draw_cube depth chars rot 10f64 10f64
+    draw_cube depth chars rot 5f64 40f64
+    !!!!Printf("\u001b[H")
+    := sum = mut checksum
+    loop.for' { from = 0i32; nearTo = height () } \ row =>
+        loop.for' { from = 0i32; nearTo = width () } \ col =>
+            := ch = index chars (col + row * width ())
+            !!!!Printf("%s", cell_text ch)
+            sum <- (*sum * 31i32 + ch) % 1000003i32
+        !!!!Printf("\n")
+    *sum
+
+/// ### next_rotation
+:= next_rotation (rotation r) : rotation = rotation { a = r.a + 0.05f64; b = r.b + 0.05f64; c = r.c + 0.01f64 }
+
+/// ### main
+:= main () : i32 =
+    := frames = 60i32
+    := size = width () * height ()
+    := depth : array f64 = arraym.init size (\ _ => 0f64)
+    := chars : array i32 = arraym.init size (\ _ => background ())
+    := rot = mut (rotation { a = 0f64; b = 0f64; c = 0f64 })
+    := checksum = mut 0i32
+    loop.for' { from = 0i32; nearTo = frames } \ _ =>
+        checksum <- render depth chars *rot *checksum
+        rot <- next_rotation *rot
+    := checksum = *checksum
+    !!!!Printf("cube: %d frames, checksum %d\n", frames, checksum)
+    0i32

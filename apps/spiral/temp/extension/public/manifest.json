@@ -1,0 +1,31 @@
+{
+  "name": "polyglot",
+  "version": "0.0.1",
+  "manifest_version": 3,
+  "description": "polyglot",
+  "permissions": ["debugger", "declarativeNetRequest", "notifications", "offscreen", "storage", "tabs"],
+  "host_permissions": ["*://*/*"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; default-src 'self'; style-src 'self' 'unsafe-inline';",
+    "sandbox": "sandbox allow-scripts allow-forms allow-popups allow-modals; script-src 'self' 'wasm-unsafe-eval'; child-src 'self'; default-src 'self'; style-src 'self' 'unsafe-inline';"
+  },
+  "background": {
+    "service_worker": "service_worker.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content_script.js"]
+    }
+  ],
+  "devtools_page": "devtools.html",
+  "web_accessible_resources": [
+    {
+      "resources": ["web_accessible_resources.js", "*.wasm"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

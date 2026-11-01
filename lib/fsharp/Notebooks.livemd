@@ -1,0 +1,7 @@
+```fsharp
+///- --test
+
+Formatter.ListExpansionLimit <- 100
+```
+
+`#!import ../../../polyglot/deps/spiral/lib/spiral/spiral_runtime.fs`

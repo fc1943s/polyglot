@@ -1,0 +1,18 @@
+{
+  "trailingComma": "es5",
+  "useTabs": false,
+  "tabWidth": 4,
+  "printWidth": 120,
+  "endOfLine": "lf",
+  "singleQuote": false,
+  "semi": false,
+  "quoteProps": "consistent",
+  "overrides": [
+    {
+      "files": ["*.json", "*.ts"],
+      "options": {
+        "tabWidth": 2
+      }
+    }
+  ]
+}

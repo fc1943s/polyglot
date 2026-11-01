@@ -1,0 +1,34 @@
+cargo-features = ["profile-rustflags"]
+
+[workspace]
+resolver = "2"
+members = [
+    "../lib/math"
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+license-file = "../LICENSE"
+repository = "https://github.com/i574n/polyglot"
+
+[workspace.dependencies]
+inline_colorization = ">=0.1,<1"
+chrono = ">=0.4,<1"
+regex = "1.10"
+sha2 = "~0.11.0-pre.4"
+serde_json = { version = "1.0", features = ["arbitrary_precision"] }
+clap = "4.5"
+futures = ">=0.3,<1"
+
+[profile.dev]
+incremental = true
+
+[profile.release]
+codegen-units = 1
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"
+overflow-checks = true
+rustflags = ["-C", "link-arg=-s"]

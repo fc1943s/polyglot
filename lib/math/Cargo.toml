@@ -1,0 +1,17 @@
+cargo-features = ["edition2024"]
+
+[package]
+name = "math"
+workspace = "../../workspace"
+version.workspace = true
+edition = "2021"
+license-file.workspace = true
+repository.workspace = true
+
+[dependencies]
+num-complex = ">=0.4,<1"
+pyo3 = "=0.26.0"
+
+[[bin]]
+name = "math"
+path = "math.rs"

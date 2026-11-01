@@ -1,0 +1,8 @@
+* text=auto eol=lf
+
+package-lock.json merge=ours
+bun.lockb merge=ours
+Cargo.lock merge=ours
+
+*.livemd.ipynb linguist-generated
+*.livemd.html linguist-generated

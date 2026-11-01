@@ -1,0 +1,47 @@
+cargo-features = ["edition2024"]
+
+[package]
+name = "spiral_temp_extension"
+workspace = "../../../../workspace"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde_json = { workspace = true }
+wasm-bindgen = ">=0.2,<1"
+borsh = { version = "1.5" }
+console_error_panic_hook = { version = ">=0.1,<1" }
+console_log = { version = "1.0" }
+futures = ">=0.3,<1"
+gloo-net = { version = ">=0.6,<1", features = ["http"] }
+js-sys = ">=0.3,<1"
+leptos = { version = "~0.8.11", features = ["csr", "nightly"] }
+leptos_router = { version = "~0.8.9", features = ["nightly"] }
+leptos_macro = { version = "~0.8.10", features = ["csr", "nightly"] }
+log = ">=0.4,<1"
+reqwest-wasm = { version = ">=0.11,<1", features = ["json"] }
+rexie = ">=0.6,<1"
+serde = "1.0"
+serde-wasm-bindgen = ">=0.6,<1"
+wasm-bindgen-futures = ">=0.4,<1"
+
+[dependencies.web-sys]
+version = ">=0.3,<1"
+features = [
+    'Document',
+    'Element',
+    'HtmlElement',
+    'HtmlInputElement',
+    'HtmlCollection',
+    'Node',
+    'NodeList',
+    'Window',
+    'console',
+    'DomTokenList',
+    'Storage',
+]

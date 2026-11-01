@@ -1,0 +1,81 @@
+# Common (Polyglot)
+
+<!-- livebook:{"break_markdown":true} -->
+
+`#!import ../../lib/fsharp/Notebooks.livemd`
+
+<!-- livebook:{"break_markdown":true} -->
+
+`#!import ../../lib/fsharp/Testing.livemd`
+
+```fsharp
+#if !INTERACTIVE
+open Lib
+#endif
+```
+
+```fsharp
+let nl = System.Environment.NewLine
+let q = @""""
+```
+
+```fsharp
+let inline cons head tail = head :: tail
+```
+
+## memoize
+
+```fsharp
+let inline memoize fn =
+    let result = lazy fn ()
+    fun () -> result.Value
+```
+
+## TraceLevel
+
+```fsharp
+type TraceLevel =
+    | Verbose
+    | Debug
+    | Info
+    | Warning
+    | Critical
+
+let inline _locals () = ""
+```
+
+### to_trace_level
+
+```fsharp
+let to_trace_level = function
+    | Verbose -> SpiralTrace.TraceLevel.Verbose
+    | Debug -> SpiralTrace.TraceLevel.Debug
+    | Info -> SpiralTrace.TraceLevel.Info
+    | Warning -> SpiralTrace.TraceLevel.Warning
+    | Critical -> SpiralTrace.TraceLevel.Critical
+```
+
+### from_trace_level
+
+```fsharp
+let from_trace_level = function
+    | SpiralTrace.TraceLevel.Verbose -> Verbose
+    | SpiralTrace.TraceLevel.Debug -> Debug
+    | SpiralTrace.TraceLevel.Info -> Info
+    | SpiralTrace.TraceLevel.Warning -> Warning
+    | SpiralTrace.TraceLevel.Critical -> Critical
+```
+
+### trace
+
+```fsharp
+let trace level fn locals =
+    let level = level |> to_trace_level
+    SpiralTrace.trace level fn locals
+```
+
+```fsharp
+///- --test
+
+trace Debug (fun () -> "test") _locals
+```
