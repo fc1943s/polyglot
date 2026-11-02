@@ -1,6 +1,5 @@
 /// # chat_contract
-:< rust
-:< rust.rust_operators
+:< rust_operators
 :< sm'_operators
 
 test chat_contract static =

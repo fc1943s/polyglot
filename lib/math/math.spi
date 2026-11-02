@@ -1,7 +1,6 @@
 /// # math
 :< testing
-:< rust.rust_operators
-:< rust
+:< rust_operators
 
 /// ## complex
 :! complex t = $'num_complex::Complex<`t>'
@@ -477,7 +476,7 @@ test test_euler_product_formula =
 
 /// ## tests
 := tests () =
-    testing.run_tests_log {
+    rust_testing.run_tests_log {
         test_zeta_at_known_values_
         test_zeta_at_2_minus2
         test_trivial_zero_at_negative_even___
