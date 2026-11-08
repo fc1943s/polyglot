@@ -17,7 +17,7 @@ jobs:
 
       - uses: moonrepo/setup-rust@v1.3.0
         with:
-          channel: "nightly-2026-10-18"
+          channel: "nightly-2026-11-05"
           components: "clippy,rust-src,rustfmt"
           targets: "wasm32-unknown-unknown"
 

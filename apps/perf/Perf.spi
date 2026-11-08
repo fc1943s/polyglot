@@ -1,5 +1,4 @@
 /// # Perf (Polyglot)
-///> fsharp
 test perf static =
     :< testing
 

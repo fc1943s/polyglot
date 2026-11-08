@@ -23,7 +23,7 @@ if (!(BuildSpiral "$projectName.spi" "$projectName.rs" "lib/math")) {
 }
 Push-Location ../../workspace
 try {
-    $rustOutput = cargo +nightly-2026-10-18 test --release --package $projectName 2>&1 | ForEach-Object { "$_" }
+    $rustOutput = cargo +nightly-2026-11-05 test --release --package $projectName 2>&1 | ForEach-Object { "$_" }
     $rustExit = $LASTEXITCODE
 } finally {
     Pop-Location
