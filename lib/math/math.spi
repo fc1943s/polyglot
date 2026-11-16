@@ -491,8 +491,6 @@ test test_euler_product_formula =
         test_euler_product_formula
     }
 
-///> _
-
 := run_main (_args : array_base string) : i32 =
     := value = 1i32
     console.write_line (sm'.(++#) "value: " (value |> sm'.obj_to_string))

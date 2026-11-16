@@ -195,7 +195,6 @@ test claim_alias =
     $'(!alias_map).get(&(!alias)).cloned()' : alias_accounts_option
 
 /// ### main
-///> _
 
 := main_native () : () =
     global """
